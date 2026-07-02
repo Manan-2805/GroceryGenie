@@ -1,0 +1,43 @@
+# Stage 1: Build dependencies
+FROM python:3.12-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install uv
+
+WORKDIR /app
+
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv
+
+COPY pyproject.toml uv.lock ./
+
+RUN uv sync --frozen --no-install-project --no-cache && \
+    rm -rf /app/.venv/lib/python3.12/site-packages/triton* && \
+    rm -rf /app/.venv/lib/python3.12/site-packages/nvidia/nccl* && \
+    rm -rf /app/.venv/lib/python3.12/site-packages/nvidia/nvshmem* && \
+    rm -rf /app/.venv/lib/python3.12/site-packages/nvidia/cusparselt* && \
+    find /app/.venv/lib/python3.12/site-packages/nvidia/ -name "libcusolver.so*" -delete && \
+    find /app/.venv/lib/python3.12/site-packages/nvidia/ -name "libcusparse.so*" -delete && \
+    find /app/.venv/lib/python3.12/site-packages/nvidia/ -name "libcufft.so*" -delete && \
+    find /app/.venv/lib/python3.12/site-packages/nvidia/ -name "libnvrtc.so*" -delete
+
+# Stage 2: Final runtime image
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /app/.venv /app/.venv
+COPY . .
+
+# Expose port and run using granian
+EXPOSE 8000
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+CMD ["granian", "--interface", "asgi", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

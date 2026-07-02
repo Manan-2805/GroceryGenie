@@ -1,0 +1,13 @@
+.venv
+backend/.venv
+frontend/node_modules
+.git
+.idea
+.pytest_cache
+backend/.pytest_cache
+backend/.ruff_cache
+frontend/dist
+models
+test_audio
+*.pyc
+__pycache__

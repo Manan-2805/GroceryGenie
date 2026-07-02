@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: grocergenie-db-prod
+    environment:
+      POSTGRES_DB: grocergenie
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: grocergenieprodpass
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: grocergenie-redis-prod
+    volumes:
+      - redis_data_prod:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: grocergenie-qdrant-prod
+    volumes:
+      - qdrant_data_prod:/qdrant/storage
+
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: grocergenie-neo4j-prod
+    environment:
+      NEO4J_AUTH: neo4j/grocergeniepassprod
+    volumes:
+      - neo4j_data_prod:/data
+      - neo4j_logs_prod:/logs
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "grocergeniepassprod", "RETURN 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: grocergenie-backend-prod
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+    env_file:
+      - .env.prod
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      neo4j:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    container_name: grocergenie-frontend-prod
+    ports:
+      - "80:80"
+    env_file:
+      - .env.prod
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data_prod:
+  redis_data_prod:
+  qdrant_data_prod:
+  neo4j_data_prod:
+  neo4j_logs_prod:
