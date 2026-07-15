@@ -1,8 +1,12 @@
+from typing import Any
 
+from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from starlette.requests import Request
 
 from app.core.config import settings
 from app.core.dependencies import get_current_user, get_db
@@ -20,7 +24,15 @@ class UserMeResponse(BaseModel):
     role: str
 
 
-class MockLoginRequest(BaseModel):
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    name: str
     role: UserRole
 
 
@@ -34,53 +46,83 @@ async def get_me(request_user: User = Depends(get_current_user)) -> UserMeRespon
     )
 
 
-@router.post("/mock-login")
-async def mock_login(
-    payload: MockLoginRequest,
-    response: Response,
-    db: AsyncSession = Depends(get_db)
+@router.post("/login")
+async def login(
+    payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)
 ) -> dict[str, str]:
     if settings.ENV_MODE != "development":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Mock login is only available in development mode.",
+            detail="Email/Password authentication is only available in development mode.",
         )
 
-    # Determine details based on role
-    if payload.role == UserRole.seller:
-        email = "test_seller@grocergo.com"
-        name = "Test Seller"
-        google_sub = "mock_seller_sub"
-    else:
-        email = "test_customer@grocergo.com"
-        name = "Test Customer"
-        google_sub = "mock_customer_sub"
-
-    # Check if user exists
-    result = await db.execute(select(User).where(User.google_sub == google_sub))
+    result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
     if not user:
-        # Create new deterministic test user
-        user = User(
-            google_sub=google_sub,
-            email=email,
-            name=name,
-            role=payload.role,
+        result = await db.execute(
+            select(User).where(User.google_sub == f"local_{payload.email}")
         )
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        user = result.scalar_one_or_none()
 
-    # Generate JWT
+    # Backwards-compatibility for seeded users
+    if not user:
+        if payload.email == "test_seller@GroceryGenie.com":
+            result = await db.execute(
+                select(User).where(User.google_sub == "mock_seller_sub")
+            )
+            user = result.scalar_one_or_none()
+        elif payload.email == "test_customer@GroceryGenie.com":
+            result = await db.execute(
+                select(User).where(User.google_sub == "mock_customer_sub")
+            )
+            user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password.",
+        )
+
     access_token = create_access_token(data={"sub": user.google_sub})
-
-    # Set httpOnly cookie
     response.set_cookie(
         key="session_token",
         value=access_token,
         httponly=True,
-        max_age=3600 * 24 * 7,  # 7 days
+        max_age=3600 * 24 * 7,
+        expires=3600 * 24 * 7,
+        samesite="strict",
+        secure=settings.ENV_MODE == "production",
+    )
+
+    return {"status": "success", "role": user.role.value, "name": user.name}
+
+
+@router.post("/dev-bypass")
+async def dev_bypass(
+    response: Response, db: AsyncSession = Depends(get_db)
+) -> dict[str, str]:
+    if settings.ENV_MODE != "development":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Dev bypass is only available in development mode.",
+        )
+
+    result = await db.execute(select(User).where(User.email == "dev@GroceryGenie.com"))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Dev user not seeded in database.",
+        )
+
+    access_token = create_access_token(data={"sub": user.google_sub})
+    response.set_cookie(
+        key="session_token",
+        value=access_token,
+        httponly=True,
+        max_age=3600 * 24 * 7,
         expires=3600 * 24 * 7,
         samesite="strict",
         secure=settings.ENV_MODE == "production",
@@ -91,27 +133,90 @@ async def mock_login(
 
 @router.post("/logout")
 async def logout(response: Response) -> dict[str, str]:
-    response.delete_cookie(
+    response.set_cookie(
         key="session_token",
+        value="",
         httponly=True,
+        max_age=0,
+        expires=0,
         samesite="strict",
         secure=settings.ENV_MODE == "production",
     )
     return {"status": "success"}
 
 
-# Placeholder for Google OAuth
+# Google OAuth Client Setup
+
+oauth = OAuth()
+oauth.register(
+    name="google",
+    client_id=settings.GOOGLE_CLIENT_ID,
+    client_secret=settings.GOOGLE_CLIENT_SECRET,
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid email profile"},
+)
+
+
 @router.get("/google/login")
-async def google_login() -> dict[str, str]:
-    # In a real setup, this redirects to Google OAuth
-    # For now, return a placeholder URL or message
-    return {"auth_url": "/api/v1/auth/mock-login"}
+async def google_login(request: Request) -> Any:
+    host = request.headers.get("host", "localhost:8000")
+    proto = "https" if request.headers.get("x-forwarded-proto") == "https" else "http"
+    redirect_uri = f"{proto}://{host}/api/v1/auth/google/callback"
+    return await oauth.google.authorize_redirect(request, redirect_uri)
 
 
 @router.get("/google/callback")
-async def google_callback() -> dict[str, str]:
-    # In a real setup, this handles Google's redirect, fetches info, and issues cookie
-    return {"status": "mocked"}
+async def google_callback(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> RedirectResponse:
+    try:
+        token = await oauth.google.authorize_access_token(request)
+    except Exception:
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/login?error=oauth_failed")
 
+    user_info = token.get("userinfo")
+    if not user_info:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to retrieve Google user info.",
+        )
 
-# Make sure get_current_user is imported at runtime (circular import prevention)
+    email = user_info.get("email")
+    name = user_info.get("name", "")
+    google_sub = user_info.get("sub")
+
+    # Check if user exists
+    result = await db.execute(select(User).where(User.google_sub == google_sub))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        # Default new google logins as customer unless email contains 'seller'
+        role = UserRole.customer
+        if email and "seller" in email.lower():
+            role = UserRole.seller
+
+        user = User(
+            google_sub=google_sub,
+            email=email,
+            name=name,
+            role=role,
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+
+    # Generate JWT
+    access_token = create_access_token(data={"sub": user.google_sub})
+
+    # Redirect to frontend and set httpOnly cookie
+    redirect_res = RedirectResponse(url=settings.FRONTEND_URL)
+    redirect_res.set_cookie(
+        key="session_token",
+        value=access_token,
+        httponly=True,
+        max_age=3600 * 24 * 7,  # 7 days
+        expires=3600 * 24 * 7,
+        samesite="strict",
+        secure=settings.ENV_MODE == "production",
+    )
+    return redirect_res

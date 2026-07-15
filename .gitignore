@@ -8,8 +8,18 @@ wheels/
 
 # Virtual environments
 .venv
-.env
+.env.*
+!.env.example
 .idea
 models
 .\backend\.pytest_cache
 .\backend\.ruff_cache
+.\backend\.mypy_cache
+
+test_audio/
+AGENTS.md
+.antigravityignore
+.agents
+
+.vscode/
+uploads/

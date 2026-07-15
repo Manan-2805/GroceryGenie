@@ -21,7 +21,11 @@ from app.services.agent.workers.layout import StoreLayoutWorker
 from app.services.agent.workers.order import OrderStatusWorker
 from app.services.agent.workers.product import ProductQueryWorker
 from app.services.agent.workers.seller import SellerDashboardWorker
-from app.services.memory import append_message_to_session, get_session_history
+from app.services.memory import (
+    append_message_to_session,
+    get_redis_client,
+    get_session_history,
+)
 
 logger = logging.getLogger("app.services.agent.orchestrator")
 
@@ -82,14 +86,89 @@ Output ONLY raw JSON. No markdown backticks, no prose."""
 
 
 class AgentOrchestrator:
-    def __init__(self, db: AsyncSession, user_id: uuid.UUID, session_id: uuid.UUID, user_role: UserRole):
+    def __init__(
+        self,
+        db: AsyncSession,
+        user_id: uuid.UUID,
+        session_id: uuid.UUID,
+        user_role: UserRole,
+    ):
         self.db = db
         self.user_id = user_id
         self.session_id = session_id
         self.user_role = user_role
 
     async def run_turn(self, user_message: str) -> dict[str, Any]:
-        logger.info(f"AgentOrchestrator starting turn for user {self.user_id}, session {self.session_id}...")
+        logger.info(
+            f"AgentOrchestrator starting turn for user {self.user_id}, session {self.session_id}..."
+        )
+
+        # Check for pending action in Redis
+        redis_client = get_redis_client()
+        pending_key = f"chat:session:{self.session_id}:pending_action"
+        pending_data_str = await redis_client.get(pending_key)
+
+        if pending_data_str:
+            pending_data = json.loads(pending_data_str)
+            # Classify user message as confirm, deny, or unrelated
+            classification_prompt = f"""Analyze the user's input: '{user_message}'
+We previously asked them to confirm this action: '{pending_data.get("summary", "an action")}'
+
+Decide if the user is confirming (agreeing to proceed, e.g. "yes", "sure", "do it"), denying (declining/canceling, e.g. "no", "stop", "cancel"), or if their message is unrelated to this action.
+Return JSON ONLY:
+{{
+  "intent": "confirm" or "deny" or "unrelated"
+}}"""
+            try:
+                class_res = await call_llm(
+                    system_prompt="You are a precise user intent classifier.",
+                    user_prompt=classification_prompt,
+                    temperature=0.0,
+                    max_tokens=64,
+                )
+                cleaned_class = class_res.strip()
+                if cleaned_class.startswith("```"):
+                    lines = cleaned_class.splitlines()
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]
+                    if lines and lines[-1].startswith("```"):
+                        lines = lines[:-1]
+                    cleaned_class = "\n".join(lines).strip()
+
+                class_data = json.loads(cleaned_class)
+                intent = class_data.get("intent", "unrelated")
+            except Exception as e:
+                logger.error(f"Failed to classify pending action verbal response: {e}")
+                intent = "unrelated"
+
+            if intent == "confirm":
+                await redis_client.delete(pending_key)
+                return await self.execute_approved_mutation(
+                    pending_data["action_type"],
+                    {
+                        "product_id": pending_data["product_id"],
+                        "quantity": pending_data["quantity"],
+                    },
+                )
+
+            if intent == "deny":
+                await redis_client.delete(pending_key)
+                cancel_text = "I've cancelled that action."
+                await append_message_to_session(
+                    str(self.session_id), "user", user_message
+                )
+                await append_message_to_session(
+                    str(self.session_id), "assistant", cancel_text
+                )
+                return {
+                    "type": "response",
+                    "text": cancel_text,
+                    "navigate_to": None,
+                    "navigate_label": None,
+                }
+
+            # Unrelated turn: clear pending state and fall through to normal execution
+            await redis_client.delete(pending_key)
 
         # 1. Load user's persistent facts
         facts = await get_user_facts(self.db, self.user_id)
@@ -105,7 +184,7 @@ class AgentOrchestrator:
         # 4. Decompose user message into sub-goals
         facts_context = facts_str if facts_str else "None"
         history_context = history_str if history_str else "None"
-        
+
         decomposition_prompt = DECOMPOSITION_SYSTEM_PROMPT.format(
             facts=facts_context, history=history_context
         )
@@ -117,7 +196,7 @@ class AgentOrchestrator:
                 temperature=0.0,
                 max_tokens=512,
             )
-            
+
             cleaned_decomp = decomp_response.strip()
             if cleaned_decomp.startswith("```"):
                 lines = cleaned_decomp.splitlines()
@@ -158,7 +237,9 @@ class AgentOrchestrator:
             "user_facts": facts_str,
         }
 
-        async def worker_runner(subgoal: dict[str, Any], results: dict[str, Any]) -> Any:
+        async def worker_runner(
+            subgoal: dict[str, Any], results: dict[str, Any]
+        ) -> Any:
             worker_type = subgoal["type"]
             goal_text = subgoal["goal"]
             subgoal_id = subgoal["id"]
@@ -173,7 +254,7 @@ class AgentOrchestrator:
             )
 
             worker_inst = worker_classes[worker_type](context, results)
-            
+
             # Retry mechanism (max 2)
             retries = 2
             while retries >= 0:
@@ -186,7 +267,9 @@ class AgentOrchestrator:
                         span.end(output=f"Error after retries: {exc}", level="ERROR")
                         raise
                     retries -= 1
-                    logger.warning(f"Worker {worker_type} failed, retrying... ({retries} left)")
+                    logger.warning(
+                        f"Worker {worker_type} failed, retrying... ({retries} left)"
+                    )
             return None
 
         dag_results = await execute_subgoal_dag(subgoals, worker_runner, context)
@@ -202,14 +285,31 @@ class AgentOrchestrator:
 
         # 8. Emit permission request if needed
         if proposed_mutation:
+            # Save pending action in Redis to allow verbal confirmations in next turns
+            pending_key = f"chat:session:{self.session_id}:pending_action"
+            await redis_client.set(
+                pending_key,
+                json.dumps(
+                    {
+                        "action_type": proposed_mutation["action_type"],
+                        "product_id": proposed_mutation["product_id"],
+                        "quantity": proposed_mutation["quantity"],
+                        "summary": proposed_mutation["summary"],
+                    }
+                ),
+                ex=600,  # expire in 10 minutes
+            )
+
             # Append turn info to Redis history
             await append_message_to_session(str(self.session_id), "user", user_message)
             await append_message_to_session(
-                str(self.session_id), "assistant", f"[Permission Required] {proposed_mutation['summary']}"
+                str(self.session_id),
+                "assistant",
+                f"[Permission Required] {proposed_mutation['summary']}",
             )
-            
+
             trace.end(output="PAUSED: Permission Required")
-            
+
             return {
                 "type": "permission_request",
                 "action": proposed_mutation["action_type"],
@@ -218,7 +318,7 @@ class AgentOrchestrator:
                     "product_id": proposed_mutation["product_id"],
                     "quantity": proposed_mutation["quantity"],
                     "action_type": proposed_mutation["action_type"],
-                }
+                },
             }
 
         # 9. Perform Synthesis
@@ -234,7 +334,7 @@ class AgentOrchestrator:
                 temperature=0.2,
                 max_tokens=512,
             )
-            
+
             cleaned_synth = synthesis_response.strip()
             if cleaned_synth.startswith("```"):
                 lines = cleaned_synth.splitlines()
@@ -255,7 +355,9 @@ class AgentOrchestrator:
 
         # 10. Update Redis Session Buffer
         await append_message_to_session(str(self.session_id), "user", user_message)
-        await append_message_to_session(str(self.session_id), "assistant", synth_data["text"])
+        await append_message_to_session(
+            str(self.session_id), "assistant", synth_data["text"]
+        )
 
         trace.end(output=synth_data["text"])
 
@@ -266,15 +368,17 @@ class AgentOrchestrator:
             "navigate_label": synth_data.get("navigate_label"),
         }
 
-    async def execute_approved_mutation(self, action_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def execute_approved_mutation(
+        self, action_type: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         """Executes a cart mutation after user approval."""
         logger.info(f"Orchestrator executing approved mutation: {action_type}...")
-        
+
         # We can implement direct execution using database logic
-        
+
         product_id = uuid.UUID(payload["product_id"])
         quantity = payload.get("quantity", 1)
-        
+
         # Instantiate trace
         trace = langfuse_client.trace(
             name="grocerygenie-execute-mutation",
@@ -286,29 +390,42 @@ class AgentOrchestrator:
         try:
             if action_type == "add_to_cart":
                 # Execute db cart addition
-                
+
                 # Check product stock
-                p_res = await self.db.execute(select(Product).where(Product.id == product_id))
+                p_res = await self.db.execute(
+                    select(Product).where(Product.id == product_id)
+                )
                 product = p_res.scalar_one_or_none()
                 if not product or product.stock < quantity:
-                    return {"type": "response", "text": "Sorry, that product is no longer in stock."}
-                
+                    return {
+                        "type": "response",
+                        "text": "Sorry, that product is no longer in stock.",
+                    }
+
                 cart_res = await self.db.execute(
-                    select(CartItem).where(CartItem.user_id == self.user_id, CartItem.product_id == product_id)
+                    select(CartItem).where(
+                        CartItem.user_id == self.user_id,
+                        CartItem.product_id == product_id,
+                    )
                 )
                 cart_item = cart_res.scalar_one_or_none()
                 if cart_item:
                     cart_item.quantity += quantity
                 else:
-                    cart_item = CartItem(user_id=self.user_id, product_id=product_id, quantity=quantity)
+                    cart_item = CartItem(
+                        user_id=self.user_id, product_id=product_id, quantity=quantity
+                    )
                     self.db.add(cart_item)
-                
+
                 await self.db.commit()
                 response_text = f"I've added {quantity}x {product.name} to your cart."
 
             elif action_type == "remove_from_cart":
                 await self.db.execute(
-                    delete(CartItem).where(CartItem.user_id == self.user_id, CartItem.product_id == product_id)
+                    delete(CartItem).where(
+                        CartItem.user_id == self.user_id,
+                        CartItem.product_id == product_id,
+                    )
                 )
                 await self.db.commit()
                 response_text = "I've removed that item from your cart."
@@ -321,8 +438,11 @@ class AgentOrchestrator:
             )
             trace.end(output=response_text)
             return {"type": "response", "text": response_text}
-            
+
         except Exception as e:
             logger.error(f"Failed to execute approved mutation: {e}")
             trace.end(output=f"Error: {e}", level="ERROR")
-            return {"type": "response", "text": "I encountered an error trying to complete that action."}
+            return {
+                "type": "response",
+                "text": "I encountered an error trying to complete that action.",
+            }

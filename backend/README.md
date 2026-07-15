@@ -1,6 +1,9 @@
-# GrocerGo - Backend Service
+# GroceryGenie - Backend Service
 
-This is the FastAPI backend service for the GrocerGo voice-first shopping assistant.
+This is the FastAPI backend service for the GroceryGenie voice-first shopping assistant.
+
+*   **Main documentation**: Refer to the main [root README](file:///d:/Project/GrocerGo/README.md).
+*   **Web client**: Refer to the [Frontend README](file:///d:/Project/GrocerGo/frontend/README.md).
 
 ## Features
 *   **FastAPI & SQLAlchemy**: Modern asynchronous REST APIs and ORM.

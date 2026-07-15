@@ -1,12 +1,26 @@
-import React, { useEffect, useState } from 'react';
 import { Trash2, ShoppingCart, ArrowRight } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+
+import { CustomDialog } from '../components/CustomDialog';
+import { DataTable, Column } from '../components/DataTable';
 import { cartService, CartItem } from '../services/api';
 
 export const Cart: React.FC = () => {
   const [items, setItems] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  // Custom Dialog States
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogTitle, setDialogTitle] = useState('');
+  const [dialogMessage, setDialogMessage] = useState('');
+
+  const showDialog = (title: string, message: string) => {
+    setDialogTitle(title);
+    setDialogMessage(message);
+    setDialogOpen(true);
+  };
 
   const fetchCart = async () => {
     try {
@@ -31,9 +45,10 @@ export const Cart: React.FC = () => {
     try {
       await cartService.update(productId, newQty);
       await fetchCart();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert('Failed to update cart quantity.');
+      const detail = e.response?.data?.detail;
+      showDialog('Error', detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : 'Failed to update cart quantity.');
     } finally {
       setUpdatingId(null);
     }
@@ -46,7 +61,7 @@ export const Cart: React.FC = () => {
       await fetchCart();
     } catch (e) {
       console.error(e);
-      alert('Failed to remove item from cart.');
+      showDialog('Error', 'Failed to remove item from cart.');
     } finally {
       setUpdatingId(null);
     }
@@ -54,12 +69,93 @@ export const Cart: React.FC = () => {
 
   const total = items.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
 
+  // Define table columns
+  const columns: Column<CartItem>[] = [
+    {
+      key: 'image',
+      header: 'Product',
+      render: (_, item) => (
+        <div className="w-12 h-12 bg-gray-50 dark:bg-gray-900/40 rounded-lg p-1 flex items-center justify-center">
+          <img
+            src={item.product.image_url || 'https://via.placeholder.com/80'}
+            alt={item.product.name}
+            className="h-full object-contain rounded"
+          />
+        </div>
+      ),
+    },
+    {
+      key: 'name',
+      header: 'Name',
+      sortable: true,
+      filterable: true,
+      render: (_, item) => (
+        <span className="font-semibold text-gray-800 dark:text-gray-200">
+          {item.product.name}
+        </span>
+      ),
+    },
+    {
+      key: 'price',
+      header: 'Price',
+      sortable: true,
+      render: (_, item) => `€${item.product.price.toFixed(2)}`,
+    },
+    {
+      key: 'quantity',
+      header: 'Quantity',
+      sortable: true,
+      render: (_, item) => (
+        <div className="flex items-center border dark:border-gray-800 rounded-lg overflow-hidden bg-white dark:bg-gray-950 w-fit">
+          <button
+            disabled={updatingId !== null || item.quantity <= 1}
+            onClick={() => handleUpdateQuantity(item.product_id, item.quantity, -1)}
+            className="px-2 py-0.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900 disabled:opacity-50 text-xs font-bold"
+          >
+            -
+          </button>
+          <span className="px-2 text-xs font-bold">{item.quantity}</span>
+          <button
+            disabled={updatingId !== null || item.quantity >= item.product.stock}
+            onClick={() => handleUpdateQuantity(item.product_id, item.quantity, 1)}
+            className="px-2 py-0.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900 disabled:opacity-50 text-xs font-bold"
+          >
+            +
+          </button>
+        </div>
+      ),
+    },
+    {
+      key: 'total',
+      header: 'Total',
+      sortable: true,
+      render: (_, item) => (
+        <span className="font-bold text-purple-600 dark:text-purple-400">
+          €{(item.product.price * item.quantity).toFixed(2)}
+        </span>
+      ),
+    },
+    {
+      key: 'actions',
+      header: 'Action',
+      render: (_, item) => (
+        <button
+          disabled={updatingId !== null}
+          onClick={() => handleRemoveItem(item.product_id)}
+          className="text-red-500 hover:text-red-600 p-1 rounded transition"
+        >
+          <Trash2 size={16} />
+        </button>
+      ),
+    },
+  ];
+
   if (loading) {
     return <div className="p-8 text-center text-gray-400">Loading your cart...</div>;
   }
 
   return (
-    <div className="max-w-4xl mx-auto py-8 px-4 space-y-6 text-left">
+    <div className="max-w-6xl mx-auto py-8 px-4 space-y-6 text-left">
       <div>
         <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">Shopping Cart</h1>
         <p className="text-sm text-gray-500">Review your grocery items before checking out</p>
@@ -77,65 +173,15 @@ export const Cart: React.FC = () => {
           </Link>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
-          {/* Items List */}
-          <div className="md:col-span-2 space-y-4">
-            {items.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-center gap-4 border rounded-2xl glassmorphism p-4 shadow-sm"
-              >
-                {/* Image */}
-                <div className="w-16 h-16 bg-gray-50 dark:bg-gray-900/40 rounded-xl p-2 flex items-center justify-center flex-shrink-0">
-                  <img
-                    src={item.product.image_url || 'https://via.placeholder.com/80'}
-                    alt={item.product.name}
-                    className="h-full object-contain rounded"
-                  />
-                </div>
-
-                {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <h4 className="font-extrabold text-sm text-gray-800 dark:text-gray-200 truncate">
-                    {item.product.name}
-                  </h4>
-                  <p className="text-xs text-gray-400">€{item.product.price.toFixed(2)} each</p>
-                </div>
-
-                {/* Quantity Editor */}
-                <div className="flex items-center border dark:border-gray-800 rounded-lg overflow-hidden bg-white dark:bg-gray-950">
-                  <button
-                    disabled={updatingId !== null || item.quantity <= 1}
-                    onClick={() => handleUpdateQuantity(item.product_id, item.quantity, -1)}
-                    className="px-2 py-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900 disabled:opacity-50"
-                  >
-                    -
-                  </button>
-                  <span className="px-3 text-xs font-bold">{item.quantity}</span>
-                  <button
-                    disabled={updatingId !== null || item.quantity >= item.product.stock}
-                    onClick={() => handleUpdateQuantity(item.product_id, item.quantity, 1)}
-                    className="px-2 py-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900 disabled:opacity-50"
-                  >
-                    +
-                  </button>
-                </div>
-
-                {/* Total & Action */}
-                <div className="text-right pl-2">
-                  <p className="font-extrabold text-sm text-purple-600 dark:text-purple-400">
-                    €{(item.product.price * item.quantity).toFixed(2)}
-                  </p>
-                  <button
-                    disabled={updatingId !== null}
-                    onClick={() => handleRemoveItem(item.product_id)}
-                    className="text-red-500 hover:text-red-600 p-1 mt-1 rounded transition"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </div>
-            ))}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+          {/* Items Table */}
+          <div className="lg:col-span-2">
+            <DataTable
+              columns={columns}
+              data={items}
+              noDataMessage="Your cart is empty"
+              exportFileName="shopping_cart"
+            />
           </div>
 
           {/* Cart Summary */}
@@ -167,6 +213,13 @@ export const Cart: React.FC = () => {
           </div>
         </div>
       )}
+
+      <CustomDialog
+        isOpen={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        title={dialogTitle}
+        message={dialogMessage}
+      />
     </div>
   );
 };

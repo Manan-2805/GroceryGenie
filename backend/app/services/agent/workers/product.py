@@ -26,7 +26,7 @@ Output ONLY raw JSON. No markdown backticks, no prose."""
 class ProductQueryWorker(BaseWorker):
     async def run(self, goal: str) -> list[dict[str, Any]]:
         logger.info(f"ProductQueryWorker starting subgoal: '{goal}'")
-        
+
         # 1. Parse subgoal goal via LLM into search filters
         try:
             parsed_str = await call_llm(
@@ -35,7 +35,7 @@ class ProductQueryWorker(BaseWorker):
                 temperature=0.0,
                 max_tokens=256,
             )
-            
+
             # Clean markdown code block if present
             cleaned = parsed_str.strip()
             if cleaned.startswith("```"):
@@ -49,7 +49,13 @@ class ProductQueryWorker(BaseWorker):
             params = json.loads(cleaned)
         except Exception as e:
             logger.error(f"ProductQueryWorker failed to parse subgoal: {e}")
-            params = {"query": goal, "category": None, "min_price": None, "max_price": None, "sort_by": None}
+            params = {
+                "query": goal,
+                "category": None,
+                "min_price": None,
+                "max_price": None,
+                "sort_by": None,
+            }
 
         # 2. Run hybrid search
         db = self.context.get("db")
@@ -60,7 +66,7 @@ class ProductQueryWorker(BaseWorker):
         category = params.get("category")
         min_price = params.get("min_price")
         max_price = params.get("max_price")
-        
+
         # Map sort_by from parsed options
         params.get("sort_by")
 
@@ -74,7 +80,9 @@ class ProductQueryWorker(BaseWorker):
             limit=10,
         )
 
-        logger.info(f"ProductQueryWorker found {len(products)} products matching search.")
+        logger.info(
+            f"ProductQueryWorker found {len(products)} products matching search."
+        )
 
         # Serialize products for output
         return [

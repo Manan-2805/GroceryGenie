@@ -14,12 +14,14 @@ logger = logging.getLogger("app.services.agent.workers.order")
 class OrderStatusWorker(BaseWorker):
     async def run(self, goal: str) -> dict[str, Any]:
         logger.info(f"OrderStatusWorker starting subgoal: '{goal}'")
-        
+
         db = self.context.get("db")
         user_id = self.context.get("user_id")
-        
+
         if not db or not user_id:
-            raise RuntimeError("Database session or user ID missing from worker context")
+            raise RuntimeError(
+                "Database session or user ID missing from worker context"
+            )
 
         # Parse order ID if specified, otherwise fetch the most recent order
         order_id: uuid.UUID | None = None
@@ -68,5 +70,5 @@ class OrderStatusWorker(BaseWorker):
                     "price": float(item.price_at_purchase),
                 }
                 for item in order.items
-            ]
+            ],
         }

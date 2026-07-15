@@ -40,7 +40,6 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
-
   neo4j:
     image: neo4j:5-community
     container_name: grocergenie-neo4j
@@ -49,6 +48,13 @@ services:
       - "7687:7687"
     environment:
       NEO4J_AUTH: neo4j/grocergeniepass
+      NEO4J_server_memory_pagecache_size: "128M"
+      NEO4J_server_memory_heap_initial__size: "256M"
+      NEO4J_server_memory_heap_max__size: "256M"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
@@ -57,44 +63,6 @@ services:
       interval: 10s
       timeout: 10s
       retries: 5
-
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.dev
-    container_name: grocergenie-backend
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
-      - /app/.venv
-      - ./models:/app/models
-    env_file:
-      - .env.dev
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_started
-      neo4j:
-        condition: service_healthy
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.dev
-    container_name: grocergenie-frontend
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    env_file:
-      - .env.dev
-    depends_on:
-      - backend
 
 volumes:
   postgres_data:

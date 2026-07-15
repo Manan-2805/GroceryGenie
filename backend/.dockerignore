@@ -1,6 +1,33 @@
+# Virtual environments and cache
 .venv
 __pycache__
 *.pyc
+*.pyo
+*.pyd
+
+# Test and lint cache
 .pytest_cache
 .ruff_cache
-test_audio
+
+# Development-only files
+tests/
+test_audio/
+download_and_test.py
+
+# Documentation
+*.md
+README.md
+
+# IDE and OS
+.idea
+.git
+.gitignore
+.python-version
+
+# Local models (mounted via volume)
+models/
+
+# Temp and build artifacts
+*.egg-info
+dist/
+build/

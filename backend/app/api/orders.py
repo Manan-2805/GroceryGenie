@@ -4,11 +4,16 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
-from app.core.dependencies import get_current_seller, get_current_user, get_db
+from app.core.dependencies import (
+    get_current_customer,
+    get_current_seller,
+    get_current_user,
+    get_db,
+)
 from app.db.models.cart import CartItem
 from app.db.models.enums import OrderStatus, UserRole
 from app.db.models.order import Order, OrderItem
@@ -26,12 +31,21 @@ class OrderProductDetail(BaseModel):
     image_url: str | None
 
 
+class OrderItemRatingResponse(BaseModel):
+    stars: int
+    comment: str | None
+
+    class Config:
+        from_attributes = True
+
+
 class OrderItemResponse(BaseModel):
     id: uuid.UUID
     product_id: uuid.UUID | None
     quantity: int
     price_at_purchase: Decimal
     product: OrderProductDetail | None
+    rating: OrderItemRatingResponse | None = None
 
     class Config:
         from_attributes = True
@@ -45,9 +59,20 @@ class OrderResponse(BaseModel):
     delivery_address: dict[str, Any]
     created_at: Any
     items: list[OrderItemResponse]
+    packed_at: Any = None
+    out_for_delivery_at: Any = None
+    delivered_at: Any = None
 
     class Config:
         from_attributes = True
+
+
+class OrderPaginatedResponse(BaseModel):
+    items: list[OrderResponse]
+    total: int
+    page: int
+    limit: int
+    pages: int
 
 
 class PlaceOrderPayload(BaseModel):
@@ -61,8 +86,8 @@ class UpdateStatusPayload(BaseModel):
 @router.post("", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
 async def place_order(
     payload: PlaceOrderPayload,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    user: User = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
 ) -> Order:
     # 1. Fetch cart items
     cart_result = await db.execute(
@@ -81,6 +106,7 @@ async def place_order(
     # 2. Check stock, calculate total, and prepare order items
     total = Decimal("0.00")
     order_items_to_create = []
+    failed_items = []
 
     for cart_item in cart_items:
         product = cart_item.product
@@ -90,26 +116,59 @@ async def place_order(
                 detail=f"Product {cart_item.product_id} is no longer active.",
             )
 
-        if product.stock < cart_item.quantity:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient stock for product '{product.name}'. Available: {product.stock}",
+        # Atomic conditional update
+        stmt = (
+            update(Product)
+            .where(Product.id == product.id)
+            .where(Product.stock >= cart_item.quantity)
+            .values(
+                stock=Product.stock - cart_item.quantity,
+                sold_count=Product.sold_count + cart_item.quantity,
             )
-
-        # Decrement stock and update sold count
-        product.stock -= cart_item.quantity
-        product.sold_count += cart_item.quantity
-
-        item_total = product.price * cart_item.quantity
-        total += item_total
-
-        # Prepare OrderItem
-        order_item = OrderItem(
-            product_id=product.id,
-            quantity=cart_item.quantity,
-            price_at_purchase=product.price,
+            .returning(Product.id)
         )
-        order_items_to_create.append(order_item)
+        result = await db.execute(stmt)
+
+        updated = result.scalar_one_or_none()
+
+        if updated is None:
+            # Fetch current stock to display a helpful message
+            check_res = await db.execute(
+                select(Product.stock, Product.name).where(Product.id == product.id)
+            )
+            row = check_res.first()
+            current_stock = row[0] if row else 0
+            product_name = row[1] if row else "Unknown Product"
+            failed_items.append(
+                {
+                    "product_id": str(product.id),
+                    "name": product_name,
+                    "requested": cart_item.quantity,
+                    "available": current_stock,
+                }
+            )
+        else:
+            item_total = product.price * cart_item.quantity
+            total += item_total
+
+            # Prepare OrderItem
+            order_item = OrderItem(
+                product_id=product.id,
+                quantity=cart_item.quantity,
+                price_at_purchase=product.price,
+            )
+            order_items_to_create.append(order_item)
+
+    if failed_items:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "insufficient_stock",
+                "message": "Some items in your cart do not have enough stock.",
+                "items": failed_items,
+            },
+        )
 
     # 3. Create Order
     order = Order(
@@ -128,6 +187,16 @@ async def place_order(
 
     await db.commit()
 
+    # Invalidate product cache and products list cache in Redis
+    from app.services.cache import (
+        invalidate_all_products_lists,
+        invalidate_product_cache,
+    )
+
+    for cart_item in cart_items:
+        await invalidate_product_cache(str(cart_item.product_id))
+    await invalidate_all_products_lists()
+
     # 5. Eager load Order details for response
     response_result = await db.execute(
         select(Order)
@@ -137,28 +206,74 @@ async def place_order(
     return response_result.scalar_one()
 
 
-@router.get("", response_model=list[OrderResponse])
+@router.get("", response_model=OrderPaginatedResponse)
 async def list_orders(
-    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
-) -> list[Order]:
-    # Customers list their own orders, sellers view fulfillment queue at a different endpoint
-    query = select(Order).options(selectinload(Order.items).joinedload(OrderItem.product))
+    page: int = 1,
+    limit: int = 10,
+    user: User = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    # Count total
+    count_stmt = select(func.count(Order.id)).where(Order.customer_id == user.id)
+    count_res = await db.execute(count_stmt)
+    total = count_res.scalar() or 0
 
-    if user.role == UserRole.customer:
-        query = query.where(Order.customer_id == user.id)
-    # If seller, they can query all orders they are involved in or fulfill
-    # (For simplicity in customer orders listing, we filter by customer_id if role=customer)
-    
-    query = query.order_by(Order.created_at.desc())
+    # Fetch items
+    query = (
+        select(Order)
+        .options(selectinload(Order.items).joinedload(OrderItem.product))
+        .where(Order.customer_id == user.id)
+        .order_by(Order.created_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+    )
     result = await db.execute(query)
-    return list(result.scalars().all())
+    items = list(result.scalars().all())
+
+    # Batch fetch ratings for all fetched orders
+    order_ids = [o.id for o in items]
+    if order_ids:
+        from app.db.models.rating import ProductRating
+
+        ratings_res = await db.execute(
+            select(ProductRating).where(ProductRating.order_id.in_(order_ids))
+        )
+        ratings_map = {
+            (str(r.order_id), str(r.product_id)): r for r in ratings_res.scalars().all()
+        }
+        for o in items:
+            for item in o.items:
+                if item.product_id:
+                    item.rating = ratings_map.get((str(o.id), str(item.product_id)))
+
+    pages = max(1, (total + limit - 1) // limit)
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": pages,
+    }
 
 
-@router.get("/seller/queue", response_model=list[OrderResponse])
+@router.get("/seller/queue", response_model=OrderPaginatedResponse)
 async def list_seller_orders(
-    seller: User = Depends(get_current_seller), db: AsyncSession = Depends(get_db)
-) -> list[Order]:
-    # Find all orders containing products owned by this seller
+    page: int = 1,
+    limit: int = 10,
+    seller: User = Depends(get_current_seller),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    # Count total unique orders for this seller
+    count_stmt = (
+        select(func.count(Order.id.distinct()))
+        .join(OrderItem)
+        .join(Product)
+        .where(Product.seller_id == seller.id)
+    )
+    count_res = await db.execute(count_stmt)
+    total = count_res.scalar() or 0
+
+    # Fetch items
     result = await db.execute(
         select(Order)
         .join(OrderItem)
@@ -167,15 +282,42 @@ async def list_seller_orders(
         .options(selectinload(Order.items).joinedload(OrderItem.product))
         .distinct()
         .order_by(Order.created_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
     )
-    return list(result.scalars().all())
+    items = list(result.scalars().all())
+
+    # Batch fetch ratings for all fetched orders
+    order_ids = [o.id for o in items]
+    if order_ids:
+        from app.db.models.rating import ProductRating
+
+        ratings_res = await db.execute(
+            select(ProductRating).where(ProductRating.order_id.in_(order_ids))
+        )
+        ratings_map = {
+            (str(r.order_id), str(r.product_id)): r for r in ratings_res.scalars().all()
+        }
+        for o in items:
+            for item in o.items:
+                if item.product_id:
+                    item.rating = ratings_map.get((str(o.id), str(item.product_id)))
+
+    pages = max(1, (total + limit - 1) // limit)
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": pages,
+    }
 
 
 @router.get("/{order_id}", response_model=OrderResponse)
 async def get_order(
     order_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ) -> Order:
     result = await db.execute(
         select(Order)
@@ -196,6 +338,17 @@ async def get_order(
             detail="Forbidden. Access denied.",
         )
 
+    # Fetch ratings for this order
+    from app.db.models.rating import ProductRating
+
+    ratings_res = await db.execute(
+        select(ProductRating).where(ProductRating.order_id == order_id)
+    )
+    ratings = {str(r.product_id): r for r in ratings_res.scalars().all()}
+    for item in order.items:
+        if item.product_id:
+            item.rating = ratings.get(str(item.product_id))
+
     return order
 
 
@@ -204,7 +357,7 @@ async def update_order_status(
     order_id: uuid.UUID,
     payload: UpdateStatusPayload,
     seller: User = Depends(get_current_seller),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ) -> Order:
     # Fetch order
     result = await db.execute(
@@ -230,5 +383,29 @@ async def update_order_status(
         )
 
     order.status = payload.status
+
+    # Set status change timestamp
+    import datetime
+
+    now = datetime.datetime.utcnow()
+    if payload.status == OrderStatus.packed:
+        order.packed_at = now
+    elif payload.status == OrderStatus.out_for_delivery:
+        order.out_for_delivery_at = now
+    elif payload.status == OrderStatus.delivered:
+        order.delivered_at = now
+
     await db.commit()
+
+    # Fetch ratings for this order
+    from app.db.models.rating import ProductRating
+
+    ratings_res = await db.execute(
+        select(ProductRating).where(ProductRating.order_id == order_id)
+    )
+    ratings = {str(r.product_id): r for r in ratings_res.scalars().all()}
+    for item in order.items:
+        if item.product_id:
+            item.rating = ratings.get(str(item.product_id))
+
     return order

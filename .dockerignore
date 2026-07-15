@@ -1,13 +1,45 @@
-.venv
-backend/.venv
-frontend/node_modules
+# Git and IDE
 .git
 .idea
+.gitignore
+
+# Python artifacts
+.venv
+backend/.venv
+__pycache__
+backend/__pycache__
+*.pyc
+*.pyo
+
+# Lint and test cache
 .pytest_cache
 backend/.pytest_cache
 backend/.ruff_cache
+
+# Frontend build artifacts and deps
+frontend/node_modules
 frontend/dist
-models
-test_audio
-*.pyc
-__pycache__
+
+# Local models directory (mounted via volume)
+models/
+
+# Audio test files
+test_audio/
+backend/test_audio/
+
+# Dev/test-only backend files
+backend/tests/
+backend/download_and_test.py
+
+# MCP server (not part of containers)
+mcp_server/
+
+# Documentation
+*.md
+backend/*.md
+frontend/*.md
+
+# Build artifacts
+*.egg-info
+dist/
+build/

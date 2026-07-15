@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 
-export interface VoiceSessionState {
+export type VoiceSessionState = {
   status: 'idle' | 'transcribing' | 'thinking' | 'speaking' | 'waiting_permission';
   transcript: string;
   isConnecting: boolean;
@@ -10,12 +10,13 @@ export interface VoiceSessionState {
     summary: string;
     payload: any;
   } | null;
+  error: string | null;
 }
 
-interface VoiceSessionContextType {
+type VoiceSessionContextType = {
   state: VoiceSessionState;
   startSession: (sessionId?: string) => Promise<void>;
-  endSession: () => void;
+  endSession: (clearError?: boolean) => void;
   sendPermissionResponse: (approved: boolean) => void;
 }
 
@@ -36,6 +37,7 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
     isConnecting: false,
     isConnected: false,
     permissionRequest: null,
+    error: null,
   });
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -49,7 +51,7 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const nextPlayTimeRef = useRef<number>(0);
   const audioSourcesRef = useRef<AudioBufferSourceNode[]>([]);
 
-  const endSession = () => {
+  const endSession = (clearError = true) => {
     logger('Ending voice session...');
     
     // Stop recording
@@ -80,13 +82,14 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
       audioContextRef.current = null;
     }
 
-    setState({
+    setState((prev) => ({
       status: 'idle',
       transcript: '',
       isConnecting: false,
       isConnected: false,
       permissionRequest: null,
-    });
+      error: clearError ? null : prev.error,
+    }));
   };
 
   const stopAllAudioPlayback = () => {
@@ -108,7 +111,7 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
     if (wsRef.current) return; // Already active
 
     logger('Starting voice session...');
-    setState((prev) => ({ ...prev, isConnecting: true, transcript: '' }));
+    setState((prev) => ({ ...prev, isConnecting: true, transcript: '', error: null }));
 
     try {
       // 1. Initialize Audio Context
@@ -155,7 +158,10 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
             // Convert Float32Array to Int16Array PCM
             const pcmData = new Int16Array(inputData.length);
             for (let i = 0; i < inputData.length; i++) {
-              pcmData[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
+              const val = inputData[i];
+              if (val !== undefined) {
+                pcmData[i] = Math.max(-32768, Math.min(32767, val * 32768));
+              }
             }
 
             if (ws.readyState === WebSocket.OPEN) {
@@ -193,6 +199,13 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
               break;
             case 'response':
               setState((prev) => ({ ...prev, status: 'speaking', transcript: data.text }));
+              if (data.navigate_to) {
+                window.dispatchEvent(
+                  new CustomEvent('agent-navigate', {
+                    detail: { path: data.navigate_to, label: data.navigate_label || 'Navigating...' },
+                  })
+                );
+              }
               break;
             case 'stop_playback':
               stopAllAudioPlayback();
@@ -216,14 +229,20 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
         }
       };
 
-      ws.onclose = () => {
-        logger('WebSocket closed.');
-        endSession();
+      ws.onclose = (event) => {
+        logger('WebSocket closed:', event);
+        if (!event.wasClean) {
+          setState((prev) => ({ ...prev, error: 'Voice server connection lost unexpectedly.' }));
+          endSession(false);
+        } else {
+          endSession(true);
+        }
       };
 
       ws.onerror = (err) => {
         logger('WebSocket error:', err);
-        endSession();
+        setState((prev) => ({ ...prev, error: 'Failed to connect to the voice server. Please verify if the backend is running.' }));
+        endSession(false);
       };
 
     } catch (e) {
@@ -240,7 +259,10 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
     const int16Array = new Int16Array(buffer);
     const float32Array = new Float32Array(int16Array.length);
     for (let i = 0; i < int16Array.length; i++) {
-      float32Array[i] = int16Array[i] / 32768.0;
+      const val = int16Array[i];
+      if (val !== undefined) {
+        float32Array[i] = val / 32768.0;
+      }
     }
 
     // Push into queue

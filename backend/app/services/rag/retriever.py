@@ -110,28 +110,24 @@ async def hybrid_search_products(
 
         if min_price is not None:
             must_filters.append(
-                qmodels.FieldCondition(
-                    key="price", range=qmodels.Range(gt=min_price)
-                )
+                qmodels.FieldCondition(key="price", range=qmodels.Range(gt=min_price))
             )
         if max_price is not None:
             must_filters.append(
-                qmodels.FieldCondition(
-                    key="price", range=qmodels.Range(lt=max_price)
-                )
+                qmodels.FieldCondition(key="price", range=qmodels.Range(lt=max_price))
             )
 
-        qdrant_filter = (
-            qmodels.Filter(must=must_filters) if must_filters else None
-        )
+        qdrant_filter = qmodels.Filter(must=must_filters) if must_filters else None
 
-        search_results = client.search(
+        search_results = client.search(  # type: ignore[attr-defined]
             collection_name=COLLECTION_NAME,
             query_vector=query_vector,
             query_filter=qdrant_filter,
             limit=limit * 2,  # Fetch more to allow merging
         )
-        vector_hits = [uuid.UUID(hit.payload["id"]) for hit in search_results if hit.payload]
+        vector_hits = [
+            uuid.UUID(hit.payload["id"]) for hit in search_results if hit.payload
+        ]
     except Exception as e:
         logger.error(f"Qdrant vector search failed: {e}")
 
@@ -163,7 +159,7 @@ async def hybrid_search_products(
     # 3. Merge results using a simple rank fusion
     # We want to keep items that match both high in the order, followed by vector-only and keyword-only
     merged_ids: list[uuid.UUID] = []
-    
+
     # First, items present in both lists
     common_hits = [pid for pid in vector_hits if pid in keyword_hits]
     merged_ids.extend(common_hits)
@@ -183,9 +179,7 @@ async def hybrid_search_products(
         return []
 
     # 4. Fetch the full Product records in the merged order
-    products_result = await db.execute(
-        select(Product).where(Product.id.in_(final_ids))
-    )
+    products_result = await db.execute(select(Product).where(Product.id.in_(final_ids)))
     products_map = {p.id: p for p in products_result.scalars().all()}
 
     # Preserve the merged/ranked ordering

@@ -2,7 +2,7 @@ import logging
 import sys
 import traceback
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from fastapi import Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -22,7 +22,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
         request.state.request_id = request_id
 
         try:
-            response = await call_next(request)
+            response = cast(Response, await call_next(request))
             response.headers["X-Request-ID"] = str(request_id)
             return response
         except Exception as exc:
@@ -56,8 +56,14 @@ async def log_and_create_error_response(
         async with AsyncSessionFactory() as session:
             user_id = None
             if hasattr(request.state, "user") and request.state.user:
-                # user is a User model, fetch its id
-                user_id = str(request.state.user.id)
+                try:
+                    from sqlalchemy.orm import attributes
+                    state = attributes.instance_state(request.state.user)
+                    uid = state.dict.get("id")
+                    if uid:
+                        user_id = str(uid)
+                except Exception:
+                    pass
 
             app_error = AppError(
                 user_id=user_id,
@@ -74,5 +80,10 @@ async def log_and_create_error_response(
 
     return JSONResponse(
         status_code=status_code,
-        content={"detail": detail, "request_id": str(request_id)},
+        content={
+            "detail": f"{detail} (Reference ID: {request_id})" if status_code >= 500 else detail,
+            "request_id": str(request_id),
+            "exception": str(exc),
+            "traceback": tb,
+        },
     )

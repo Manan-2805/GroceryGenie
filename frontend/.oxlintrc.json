@@ -1,8 +1,23 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
+  "plugins": [
+    "react",
+    "typescript",
+    "oxc"
+  ],
   "rules": {
     "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
+    "react/only-export-components": [
+      "warn",
+      {
+        "allowConstantExport": true
+      }
+    ],
+    "oxc/no-explicit-any": "error",
+    "oxc/no-unnecessary-type-annotation": "error",
+    "oxc/no-unused-imports": "error",
+    "oxc/no-unused-vars": "error",
+    "oxc/no-invalid-void-type": "error",
+    "oxc/no-unreachable-code": "error"
   }
 }

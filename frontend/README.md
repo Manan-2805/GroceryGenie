@@ -1,6 +1,9 @@
-# GrocerGo - Frontend Client
+# GroceryGenie - Frontend Client
 
-This is the React + TypeScript frontend client for the GrocerGo voice-first shopping assistant.
+This is the React + TypeScript frontend client for the GroceryGenie voice-first shopping assistant.
+
+*   **Main documentation**: Refer to the main [root README](file:///d:/Project/GrocerGo/README.md).
+*   **FastAPI server**: Refer to the [Backend README](file:///d:/Project/GrocerGo/backend/README.md).
 
 ## Features
 *   **Vite React**: High-performance development and production bundles.

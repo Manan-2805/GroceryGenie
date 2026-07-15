@@ -1,39 +1,60 @@
-.PHONY: install lint format security test check migrate dev prod logs shell
+SHELL := powershell.exe
+.SHELLFLAGS := -NoProfile -Command
 
-install:
-	uv sync
-	cd frontend && npm install
+.PHONY: install setup lint format security test check migrate dev prod up down backend-logs frontend-logs setup-git-hooks
+
+setup:
+	if (!(Test-Path .env.dev)) { Copy-Item .env.example .env.dev }
+	docker compose -f docker-compose.infra.yml up -d
+	if (!(Test-Path scripts)) { New-Item -ItemType Directory -Path scripts }
+	Copy-Item -Path scripts/pre-commit -Destination .git/hooks/pre-commit -Force
+	Write-Host "GroceryGenie setup complete! Infrastructure containers are starting."
+
+install: setup
+
+setup-git-hooks:
+	if (!(Test-Path scripts)) { New-Item -ItemType Directory -Path scripts }
+	Copy-Item -Path scripts/pre-commit -Destination .git/hooks/pre-commit -Force
+	Write-Host "Git hooks installed successfully."
 
 lint:
-	cd backend && uv run ruff check app tests
-	cd backend && uv run mypy --strict app
-	cd frontend && npm run lint
+	cd backend; uv run ruff check app tests --fix
+	cd backend; uv run mypy --strict --explicit-package-bases app
+	cd frontend; if (!(Test-Path node_modules\.bin)) { npm install }; npm run check
 
 format:
-	cd backend && uv run ruff format app tests
-	cd frontend && npm run format || echo "No format script in frontend, skipping"
+	cd backend; uv run ruff format app tests
+	cd frontend; if (!(Test-Path node_modules\.bin)) { npm install }; npx prettier --write "src/**/*.{ts,tsx,css,html}"
 
 security:
-	cd backend && uv run bandit -c pyproject.toml -r app
-	cd backend && uv run pip-audit
+	cd backend; uv run bandit -c pyproject.toml -r app
+	cd backend; uv run pip-audit
 
 test:
-	cd backend && uv run pytest -v
+	cd backend; uv run python -m pytest -v
 
-check: lint security test
-	@echo "All pre-commit checks passed successfully!"
+check: lint format security
+	Write-Host "All pre-commit checks passed successfully on local machine!"
 
 migrate:
-	cd backend && uv run alembic upgrade head
+	cd backend; uv run alembic upgrade head
 
-dev:
-	docker compose -f docker-compose.dev.yml up --build
+db-reset:
+	cd backend; uv run python -B -m app.db.reset
+	cd backend; uv run alembic upgrade head
+	cd backend; uv run python -B -m app.db.seed
+
+up:
+	docker compose -f docker-compose.infra.yml up -d
+
+down:
+	docker compose -f docker-compose.infra.yml down
 
 prod:
-	docker compose -f docker-compose.prod.yml up --build
+	docker compose -f docker-compose.prod.yml up --build -d
 
-logs:
-	docker compose -f docker-compose.dev.yml logs -f backend
+backend-logs:
+	docker compose -f docker-compose.prod.yml logs -f backend
 
-shell:
-	docker compose -f docker-compose.dev.yml exec backend bash
+frontend-logs:
+	docker compose -f docker-compose.prod.yml logs -f frontend

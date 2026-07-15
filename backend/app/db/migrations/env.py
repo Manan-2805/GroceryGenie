@@ -2,15 +2,13 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # Import configuration and models
 from app.core.config import settings
 from app.db.base import Base
-
-# Make sure all models are imported so they are registered on Base.metadata
-from app.db.models import *
+from app.db.models import *  # noqa: F403
 
 config = context.config
 
@@ -37,7 +35,7 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection) -> None:
+def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,

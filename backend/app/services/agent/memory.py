@@ -47,7 +47,7 @@ async def classify_and_store_fact(
             temperature=0.0,
             max_tokens=256,
         )
-        
+
         # Clean response if markdown blocks were output
         cleaned_response = response_str.strip()
         if cleaned_response.startswith("```"):
@@ -64,7 +64,7 @@ async def classify_and_store_fact(
 
         fact_text = data.get("fact_text", "").strip()
         category_str = data.get("category", "other")
-        
+
         if not fact_text:
             return None
 

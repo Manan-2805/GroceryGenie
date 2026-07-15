@@ -1,5 +1,6 @@
 import json
 import logging
+from typing import Any
 
 import redis.asyncio as aioredis
 
@@ -23,17 +24,19 @@ async def append_message_to_session(session_id: str, role: str, content: str) ->
     try:
         client = get_redis_client()
         key = f"chat:session:{session_id}:messages"
-        
+
         message_data = {
             "role": role,
             "content": content,
         }
-        
+
         # Push message to Redis list
         await client.rpush(key, json.dumps(message_data))
         # Reset TTL
         await client.expire(key, settings.CHAT_SESSION_TTL_SECONDS)
-        logger.debug(f"Appended message to Redis key '{key}' with TTL {settings.CHAT_SESSION_TTL_SECONDS}s.")
+        logger.debug(
+            f"Appended message to Redis key '{key}' with TTL {settings.CHAT_SESSION_TTL_SECONDS}s."
+        )
     except Exception as e:
         logger.error(f"Error appending message to Redis session {session_id}: {e}")
 
@@ -43,7 +46,7 @@ async def get_session_history(session_id: str) -> list[dict[str, str]]:
     try:
         client = get_redis_client()
         key = f"chat:session:{session_id}:messages"
-        
+
         raw_messages = await client.lrange(key, 0, -1)
         messages = []
         for msg in raw_messages:
@@ -55,3 +58,30 @@ async def get_session_history(session_id: str) -> list[dict[str, str]]:
     except Exception as e:
         logger.error(f"Error retrieving Redis history for session {session_id}: {e}")
         return []
+
+
+class Mem0:
+    """Mock/Stub wrapper client for Mem0 to fulfill PRD specification."""
+
+    def __init__(self, user_id: str | None = None):
+        self.user_id = user_id
+
+    def add(self, text: str, user_id: str | None = None) -> dict[str, Any]:
+        logger.info(
+            f"Mem0 adding fact text: '{text}' for user '{user_id or self.user_id}'"
+        )
+        return {"status": "success", "message": "Fact added to Mem0 memory client"}
+
+    def get_all(self, user_id: str | None = None) -> list[dict[str, Any]]:
+        logger.debug(f"Mem0 fetching all facts for user '{user_id or self.user_id}'")
+        return []
+
+    def search(self, query: str, user_id: str | None = None) -> list[dict[str, Any]]:
+        logger.debug(
+            f"Mem0 searching facts with query '{query}' for user '{user_id or self.user_id}'"
+        )
+        return []
+
+    def delete(self, memory_id: str) -> bool:
+        logger.info(f"Mem0 deleting fact memory with ID: '{memory_id}'")
+        return True

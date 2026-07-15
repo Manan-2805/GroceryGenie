@@ -25,7 +25,9 @@ class DietaryFactWorker(BaseWorker):
         # Gather product details from previous subgoals
         products_to_analyze: list[dict[str, Any]] = []
         for _sg_id, sg_res in self.subgoal_results.items():
-            if sg_res.get("status") == "success" and isinstance(sg_res.get("output"), list):
+            if sg_res.get("status") == "success" and isinstance(
+                sg_res.get("output"), list
+            ):
                 products_to_analyze.extend(sg_res["output"])
 
         # Format products context

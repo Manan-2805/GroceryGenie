@@ -41,7 +41,9 @@ class CartActionWorker(BaseWorker):
         # 1. Gather products context from previous subgoals
         products_list: list[dict[str, Any]] = []
         for sg_res in self.subgoal_results.values():
-            if sg_res.get("status") == "success" and isinstance(sg_res.get("output"), list):
+            if sg_res.get("status") == "success" and isinstance(
+                sg_res.get("output"), list
+            ):
                 products_list.extend(sg_res["output"])
 
         context_str = json.dumps(products_list, indent=2)
@@ -57,7 +59,7 @@ class CartActionWorker(BaseWorker):
                 temperature=0.0,
                 max_tokens=256,
             )
-            
+
             cleaned = response_str.strip()
             if cleaned.startswith("```"):
                 lines = cleaned.splitlines()

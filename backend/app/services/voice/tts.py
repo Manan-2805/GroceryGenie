@@ -1,7 +1,10 @@
+import asyncio
 import logging
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from piper import PiperVoice
-from piper.voice import SynthesisConfig
+from piper.voice import SynthesisConfig  # type: ignore[attr-defined]
 
 from app.core.config import settings
 
@@ -43,7 +46,40 @@ def synthesize_text_to_pcm(text: str, emotion: str = "neutral") -> bytes:
     logger.debug(f"Synthesizing text: '{text}' with emotion preset '{emotion}'")
     chunks = list(voice.synthesize(text, syn_config=syn_config))
     return b"".join(
-        c.audio_int16_bytes if hasattr(c, "audio_int16_bytes")
+        c.audio_int16_bytes
+        if hasattr(c, "audio_int16_bytes")
         else (c.audio if hasattr(c, "audio") else c)  # type: ignore
         for c in chunks
     )
+
+
+async def synthesize_text_to_pcm_stream(
+    text: str, emotion: str = "neutral"
+) -> AsyncGenerator[bytes, None]:
+    """Asynchronously synthesizes text and yields raw PCM audio chunks progressively."""
+    voice = get_piper_voice()
+    syn_config = EMOTION_PRESETS.get(emotion, EMOTION_PRESETS["neutral"])
+
+    logger.debug(
+        f"Streaming synthesis of text: '{text}' with emotion preset '{emotion}'"
+    )
+
+    iterator = voice.synthesize(text, syn_config=syn_config)
+
+    def next_chunk(it: Any) -> Any:
+        try:
+            return next(it)
+        except StopIteration:
+            return None
+
+    while True:
+        chunk = await asyncio.to_thread(next_chunk, iterator)
+        if chunk is None:
+            break
+
+        audio_bytes = (
+            chunk.audio_int16_bytes
+            if hasattr(chunk, "audio_int16_bytes")
+            else (chunk.audio if hasattr(chunk, "audio") else chunk)
+        )
+        yield audio_bytes

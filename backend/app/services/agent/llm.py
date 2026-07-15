@@ -13,7 +13,9 @@ _openai_client: AsyncOpenAI | None = None
 def get_llm_client() -> AsyncOpenAI:
     global _openai_client
     if _openai_client is None:
-        logger.info(f"Initializing AsyncOpenAI client with base URL: {settings.NIM_BASE_URL}")
+        logger.info(
+            f"Initializing AsyncOpenAI client with base URL: {settings.NIM_BASE_URL}"
+        )
         _openai_client = AsyncOpenAI(
             api_key=settings.NIM_API_KEY,
             base_url=settings.NIM_BASE_URL,

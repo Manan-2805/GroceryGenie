@@ -1,6 +1,6 @@
-# GrocerGo
+# GroceryGenie
 
-GrocerGo is a premium, voice-first intelligent grocery shopping assistant. It enables customers to find products, verify dietary requirements/ingredients with strict safety guardrails, check store layouts (Neo4j aisle mappings), and order groceries using a natural language interface (text SSE or WS voice mode). It also provides a dashboard and inventory controls for sellers.
+GroceryGenie is a premium, voice-first intelligent grocery shopping assistant. It enables customers to find products, verify dietary requirements/ingredients with strict safety guardrails, check store layouts (Neo4j aisle mappings), and order groceries using a natural language interface (text SSE or WS voice mode). It also provides a dashboard and inventory controls for sellers.
 
 ## Tech Stack
 *   **Backend**: FastAPI, Async SQLAlchemy, Alembic, PostgreSQL, Redis, Qdrant Vector DB, Neo4j Graph DB, Langfuse.
@@ -11,13 +11,18 @@ GrocerGo is a premium, voice-first intelligent grocery shopping assistant. It en
 ---
 
 ## Directory Structure
+Detailed setups for individual components are documented in their respective subdirectories:
+
+*   **Backend Application**: Refer to the [Backend README](file:///d:/Project/GrocerGo/backend/README.md) for server configuration, models, APIs, and python settings.
+*   **Frontend Client**: Refer to the [Frontend README](file:///d:/Project/GrocerGo/frontend/README.md) for web client setup, styling, voice streaming, and assets.
+
 ```
-GrocerGo/
-├── backend/             # FastAPI Backend Service
+GroceryGenie/
+├── backend/             # FastAPI Backend Service (see backend/README.md)
 │   ├── app/             # Application source (api, core, db, services)
 │   ├── tests/           # Unit tests for Orchestrator, DAG, STT, TTS
 │   └── download_and_test.py  # Script to download ASR/TTS models & run test CLI
-├── frontend/            # React + TypeScript Frontend
+├── frontend/            # React + TypeScript Frontend (see frontend/README.md)
 ├── mcp_server/          # FastMCP server python module
 ├── models/              # Local ASR/TTS model artifacts (ignored in git)
 └── docker-compose.dev.yml   # Dev services (Postgres, Redis, Qdrant, Neo4j, etc)

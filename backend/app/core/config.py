@@ -1,3 +1,18 @@
+import os
+from pathlib import Path
+
+# Resolve MODELS_DIR: inside Docker, it's mounted at /app/models; otherwise, at backend/models on the host
+if Path("/app/models").exists():
+    MODELS_DIR = Path("/app/models")
+else:
+    MODELS_DIR = Path(__file__).resolve().parent.parent.parent / "models"
+
+if Path("/app/uploads").exists() or os.path.exists("/.dockerenv"):
+    UPLOADS_DIR = Path("/app/uploads")
+else:
+    UPLOADS_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
+
+os.environ["HF_HOME"] = str(MODELS_DIR / "huggingface")
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -5,7 +20,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env.dev",
+        env_file=str(Path(__file__).resolve().parent.parent.parent.parent / ".env.dev"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -30,7 +45,7 @@ class Settings(BaseSettings):
     # LLM Orchestrator (NIM / OpenAI compatible API)
     NIM_API_KEY: str = Field(default="placeholder_nim_api_key")
     NIM_BASE_URL: str = Field(default="https://integrate.api.nvidia.com/v1")
-    NIM_MODEL: str = Field(default="meta/llama-3-70b-instruct")
+    NIM_MODEL: str = Field(default="meta/llama-3.1-70b-instruct")
 
     # Google OAuth credentials
     GOOGLE_CLIENT_ID: str = Field(default="placeholder_client_id")
@@ -44,8 +59,16 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
 
     # Voice Services config
-    PIPER_VOICE_MODEL: str = Field(default="/app/models/en_US-lessac-medium.onnx")
-    PIPER_VOICE_CONFIG: str = Field(default="/app/models/en_US-lessac-medium.onnx.json")
+    PIPER_VOICE_MODEL: str = Field(
+        default=os.getenv(
+            "PIPER_VOICE_MODEL", str(MODELS_DIR / "en_US-lessac-medium.onnx")
+        )
+    )
+    PIPER_VOICE_CONFIG: str = Field(
+        default=os.getenv(
+            "PIPER_VOICE_CONFIG", str(MODELS_DIR / "en_US-lessac-medium.onnx.json")
+        )
+    )
     ONNX_ASR_PROVIDERS: str = Field(default="CPUExecutionProvider")
     PARAKEET_CHUNK_SECONDS: int = Field(default=5)
 
@@ -65,11 +88,17 @@ class Settings(BaseSettings):
 
     @property
     def parsed_origins(self) -> list[str]:
-        return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
+        return [
+            origin.strip()
+            for origin in self.ALLOWED_ORIGINS.split(",")
+            if origin.strip()
+        ]
 
     @property
     def parsed_asr_providers(self) -> list[str]:
-        return [prov.strip() for prov in self.ONNX_ASR_PROVIDERS.split(",") if prov.strip()]
+        return [
+            prov.strip() for prov in self.ONNX_ASR_PROVIDERS.split(",") if prov.strip()
+        ]
 
 
 settings = Settings()

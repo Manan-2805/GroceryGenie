@@ -1,6 +1,7 @@
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, ShoppingCart } from 'lucide-react';
 import { Link } from 'react-router-dom';
+
 import { productService, Product } from '../services/api';
 
 export const Home: React.FC = () => {
@@ -12,7 +13,7 @@ export const Home: React.FC = () => {
     const fetchFeatured = async () => {
       try {
         const data = await productService.list(undefined, true);
-        setFeaturedProducts(data);
+        setFeaturedProducts(data.items);
       } catch (e) {
         console.error(e);
       } finally {
@@ -57,7 +58,7 @@ export const Home: React.FC = () => {
       {/* Featured Products Carousel */}
       <div className="space-y-4">
         <h2 className="text-2xl font-black text-gray-800 dark:text-gray-200">Featured Deals</h2>
-        
+
         {loading ? (
           <p className="text-sm text-gray-400">Loading products...</p>
         ) : featuredProducts.length === 0 ? (
@@ -65,64 +66,70 @@ export const Home: React.FC = () => {
             No products featured yet.
           </div>
         ) : (
-          <div className="relative border rounded-2xl overflow-hidden glassmorphism p-6 flex flex-col md:flex-row items-center gap-6 shadow-md">
-            {/* Left arrow */}
-            <button
-              onClick={prevSlide}
-              className="absolute left-3 top-1/2 -translate-y-1/2 p-2 bg-white dark:bg-gray-900 border rounded-full hover:bg-gray-50 dark:hover:bg-gray-800 shadow"
-            >
-              <ChevronLeft size={20} />
-            </button>
-
-            {/* Product display */}
-            <div className="w-full md:w-1/3 flex justify-center">
-              <img
-                src={featuredProducts[currentIndex].image_url || 'https://via.placeholder.com/150'}
-                alt={featuredProducts[currentIndex].name}
-                className="h-48 object-contain rounded-xl"
-              />
-            </div>
-            
-            <div className="flex-1 space-y-4">
-              <div>
-                <span className="text-[10px] font-extrabold tracking-wider px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400">
-                  FEATURED ({featuredProducts[currentIndex].avg_rating} ⭐)
-                </span>
-                <h3 className="text-2xl font-extrabold text-gray-800 dark:text-gray-200 mt-2">
-                  {featuredProducts[currentIndex].name}
-                </h3>
-                <p className="text-sm text-gray-500 mt-1 max-w-md">
-                  {featuredProducts[currentIndex].description}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-4">
-                <span className="text-3xl font-black text-purple-600 dark:text-purple-400">
-                  €{featuredProducts[currentIndex].price.toFixed(2)}
-                </span>
-                <span className="text-xs text-gray-400">
-                  Category: {featuredProducts[currentIndex].category}
-                </span>
-              </div>
-
-              <div>
-                <Link
-                  to={`/items/${featuredProducts[currentIndex].id}`}
-                  className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition inline-flex items-center gap-2"
+          (() => {
+            const currentProduct = featuredProducts[currentIndex];
+            if (!currentProduct) return null;
+            return (
+              <div className="relative border rounded-2xl overflow-hidden glassmorphism p-6 flex flex-col md:flex-row items-center gap-6 shadow-md">
+                {/* Left arrow */}
+                <button
+                  onClick={prevSlide}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 p-2 bg-white dark:bg-gray-900 border rounded-full hover:bg-gray-50 dark:hover:bg-gray-800 shadow"
                 >
-                  View Detail
-                </Link>
-              </div>
-            </div>
+                  <ChevronLeft size={20} />
+                </button>
 
-            {/* Right arrow */}
-            <button
-              onClick={nextSlide}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-white dark:bg-gray-900 border rounded-full hover:bg-gray-50 dark:hover:bg-gray-800 shadow"
-            >
-              <ChevronRight size={20} />
-            </button>
-          </div>
+                {/* Product display */}
+                <div className="w-full md:w-1/3 flex justify-center">
+                  <img
+                    src={currentProduct.image_url || 'https://via.placeholder.com/150'}
+                    alt={currentProduct.name}
+                    className="h-48 object-contain rounded-xl"
+                  />
+                </div>
+
+                <div className="flex-1 space-y-4">
+                  <div>
+                    <span className="text-[10px] font-extrabold tracking-wider px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400">
+                      FEATURED ({currentProduct.avg_rating} ⭐)
+                    </span>
+                    <h3 className="text-2xl font-extrabold text-gray-800 dark:text-gray-200 mt-2">
+                      {currentProduct.name}
+                    </h3>
+                    <p className="text-sm text-gray-500 mt-1 max-w-md">
+                      {currentProduct.description}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <span className="text-3xl font-black text-purple-600 dark:text-purple-400">
+                      €{currentProduct.price.toFixed(2)}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      Category: {currentProduct.category}
+                    </span>
+                  </div>
+
+                  <div>
+                    <Link
+                      to={`/items/${currentProduct.id}`}
+                      className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition inline-flex items-center gap-2"
+                    >
+                      View Detail
+                    </Link>
+                  </div>
+                </div>
+
+                {/* Right arrow */}
+                <button
+                  onClick={nextSlide}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-white dark:bg-gray-900 border rounded-full hover:bg-gray-50 dark:hover:bg-gray-800 shadow"
+                >
+                  <ChevronRight size={20} />
+                </button>
+              </div>
+            );
+          })()
         )}
       </div>
     </div>

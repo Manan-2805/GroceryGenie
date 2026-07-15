@@ -52,7 +52,9 @@ async def execute_subgoal_dag(
 
         if not runnable_batch:
             # We have uncompleted nodes but none are runnable -> Cycle detected
-            remaining_ids = [sg["id"] for sg in subgoals if sg["id"] not in completed_ids]
+            remaining_ids = [
+                sg["id"] for sg in subgoals if sg["id"] not in completed_ids
+            ]
             raise DAGCycleError(
                 f"Dependency cycle detected in DAG. Remaining unresolvable nodes: {remaining_ids}"
             )
@@ -77,7 +79,7 @@ async def execute_subgoal_dag(
                 results[sg_id] = {"status": "failed", "error": str(res)}
             else:
                 results[sg_id] = {"status": "success", "output": res}
-            
+
             # Even if it fails, we mark it completed so the DAG can complete,
             # and the Orchestrator will handle the partial-failure synthesis
             completed_ids.add(sg_id)

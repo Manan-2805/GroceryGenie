@@ -1,17 +1,16 @@
 import logging
 import uuid
-from typing import Any
 
-from neo4j import GraphDatabase
+from neo4j import Driver, GraphDatabase
 
 from app.core.config import settings
 
 logger = logging.getLogger("app.services.rag.graph")
 
-_neo4j_driver: GraphDatabase | None = None
+_neo4j_driver: Driver | None = None
 
 
-def get_neo4j_driver() -> Any:
+def get_neo4j_driver() -> Driver:
     global _neo4j_driver
     if _neo4j_driver is None:
         logger.info(f"Connecting to Neo4j at {settings.NEO4J_URI}...")
@@ -31,7 +30,7 @@ def close_neo4j_driver() -> None:
 
 def seed_store_layout() -> None:
     driver = get_neo4j_driver()
-    
+
     # 2-3 Sections
     sections = [
         {"name": "Fresh Foods", "desc": "Fruits, vegetables and bakery"},
@@ -50,6 +49,9 @@ def seed_store_layout() -> None:
     ]
 
     with driver.session() as session:
+        # Clear database to start clean
+        session.run("MATCH (n) DETACH DELETE n")
+
         # Create Sections
         for s in sections:
             session.run(
@@ -70,13 +72,16 @@ def seed_store_layout() -> None:
                 name=a["name"],
                 section_name=a["section"],
             )
-            
+
     logger.info("Successfully seeded Neo4j store layout sections and aisles.")
 
 
 def determine_aisle_for_category(category: str) -> str:
     cat = category.lower()
-    if any(k in cat for k in ["fruit", "vegetable", "produce", "tomato", "spinach", "salad"]):
+    if any(
+        k in cat
+        for k in ["fruit", "vegetable", "produce", "tomato", "spinach", "salad"]
+    ):
         return "Aisle 1 (Produce)"
     if any(k in cat for k in ["bread", "bakery", "pastry", "loaf", "cake"]):
         return "Aisle 2 (Bakery)"
@@ -84,9 +89,34 @@ def determine_aisle_for_category(category: str) -> str:
         return "Aisle 3 (Canned Goods)"
     if any(k in cat for k in ["spice", "oil", "salt", "pepper", "condiment"]):
         return "Aisle 4 (Spices & Oils)"
-    if any(k in cat for k in ["milk", "dairy", "egg", "cheese", "butter", "yogurt", "vegan", "oat", "almond"]):
+    if any(
+        k in cat
+        for k in [
+            "milk",
+            "dairy",
+            "egg",
+            "cheese",
+            "butter",
+            "yogurt",
+            "vegan",
+            "oat",
+            "almond",
+        ]
+    ):
         return "Aisle 5 (Milk & Eggs)"
-    if any(k in cat for k in ["drink", "beverage", "soda", "juice", "water", "coke", "tea", "coffee"]):
+    if any(
+        k in cat
+        for k in [
+            "drink",
+            "beverage",
+            "soda",
+            "juice",
+            "water",
+            "coke",
+            "tea",
+            "coffee",
+        ]
+    ):
         return "Aisle 6 (Cold Drinks)"
     return "Aisle 3 (Canned Goods)"  # Default fallback
 
@@ -122,7 +152,7 @@ def get_adjacent_products(product_id: uuid.UUID) -> list[dict[str, str]]:
         WHERE other.id <> $product_id
         RETURN other.id AS id, other.name AS name LIMIT 5
     """
-    
+
     with driver.session() as session:
         result = session.run(query_aisle, product_id=pid_str)
         products = [{"id": record["id"], "name": record["name"]} for record in result]

@@ -20,7 +20,9 @@ class SellerDashboardWorker(BaseWorker):
         user_role = self.context.get("user_role")
 
         if not db or not seller_id:
-            raise RuntimeError("Database session or seller ID missing from worker context")
+            raise RuntimeError(
+                "Database session or seller ID missing from worker context"
+            )
 
         # Security check: must be a seller
         if user_role != UserRole.seller:
@@ -53,8 +55,7 @@ class SellerDashboardWorker(BaseWorker):
 
         # 3. Fetch summary stats (total products, total sold)
         stats_query = select(
-            func.count(Product.id),
-            func.sum(Product.sold_count)
+            func.count(Product.id), func.sum(Product.sold_count)
         ).where(
             Product.seller_id == seller_id,
             Product.is_active,
@@ -78,5 +79,5 @@ class SellerDashboardWorker(BaseWorker):
             "stats": {
                 "total_products": total_products,
                 "total_sold": total_sold,
-            }
+            },
         }

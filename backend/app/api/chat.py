@@ -2,11 +2,12 @@ import asyncio
 import json
 import logging
 import uuid
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_db
@@ -24,7 +25,7 @@ async def sse_generator(
     user_message: str,
     approved_action: str | None = None,
     approved_payload: dict[str, Any] | None = None,
-):
+) -> AsyncGenerator[str, None]:
     try:
         # If this is an approved action execution, run the action
         if approved_action and approved_payload:
@@ -40,7 +41,7 @@ async def sse_generator(
         else:
             # It's a standard response, simulate token streaming for smooth UI typing effect
             full_text = result.get("text", "")
-            
+
             # Yield chunks of words
             words = full_text.split(" ")
             for i, word in enumerate(words):
@@ -60,12 +61,15 @@ async def sse_generator(
 
     except Exception as e:
         logger.error(f"Error in SSE generator: {e}")
-        err_data = {"type": "error", "text": "An error occurred while processing your query."}
+        err_data = {
+            "type": "error",
+            "text": "An error occurred while processing your query.",
+        }
         yield f"event: error\ndata: {json.dumps(err_data)}\n\n"
 
 
 class ChatMessagePayload(BaseModel):
-    message: str
+    message: str = Field(..., max_length=200)
     session_id: uuid.UUID | None = None
     approved_action: str | None = None
     approved_payload: dict[str, Any] | None = None
@@ -75,7 +79,7 @@ class ChatMessagePayload(BaseModel):
 async def text_chat_endpoint(
     payload: ChatMessagePayload,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """
     Text chat endpoint using Server-Sent Events (SSE).
@@ -93,7 +97,7 @@ async def text_chat_endpoint(
     orchestrator = AgentOrchestrator(
         db=db,
         user_id=user.id,
-        session_id=session_id,  # type: ignore
+        session_id=session_id,
         user_role=user.role,
     )
 
@@ -111,6 +115,3 @@ async def text_chat_endpoint(
             "X-Session-ID": str(session_id),
         },
     )
-
-
-

@@ -1,19 +1,31 @@
-import onnx_asr
-import time
-import wave
 import io
-import random
+import os
 from pathlib import Path
+import random
+import time
+import urllib.request
+import wave
+
+# Resolve MODELS_DIR: inside Docker, it's mounted at /app/models; otherwise, at backend/models on the host
+if Path("/app/models").exists():
+    MODELS_DIR = Path("/app/models")
+else:
+    MODELS_DIR = Path(__file__).resolve().parent / "models"
+
+# Set HF cache home inside the models folder
+os.environ["HF_HOME"] = str(MODELS_DIR / "huggingface")
+
+import numpy as np
+import onnx_asr
 from piper import PiperVoice
 from piper.voice import SynthesisConfig
-import numpy as np
 
 # Optional deps:
 #   uv add sounddevice jiwer
 try:
     import sounddevice as sd
     MIC_AVAILABLE = True
-except ImportError:
+except (ImportError, OSError):
     MIC_AVAILABLE = False
 
 try:
@@ -26,8 +38,6 @@ except ImportError:
 # CONFIG
 # ============================================================
 MODEL_NAME = "nemo-parakeet-tdt-0.6b-v3"
-ROOT_DIR = Path(__file__).resolve().parent.parent
-MODELS_DIR = ROOT_DIR / "models"
 
 # Add more voices here (accent variety) if you download them.
 # Piper voices: https://github.com/rhasspy/piper/blob/master/VOICES.md
@@ -99,7 +109,7 @@ AUDIO_DIR.mkdir(exist_ok=True)
 
 LONG_TEXT_SENTENCES = [
     "Please order 2 kg of tomatoes and 1 liter of milk from the grocery store.",
-    "GrocerGo is an amazing app for smart shopping and inventory management.",
+    "GroceryGenie is an amazing app for smart shopping and inventory management.",
     "Also add a dozen eggs, a loaf of bread, and some fresh spinach to the cart.",
     "Make sure the delivery arrives before six in the evening tomorrow.",
     "If the tomatoes are out of stock, replace them with red bell peppers instead.",
@@ -108,7 +118,7 @@ LONG_TEXT_SENTENCES = [
 
 MIC_TEST_SENTENCES = [
     "Please order 2 kg of tomatoes and 1 liter of milk from the grocery store.",
-    "GrocerGo is an amazing app for smart shopping and inventory management.",
+    "GroceryGenie is an amazing app for smart shopping and inventory management.",
 ]
 
 

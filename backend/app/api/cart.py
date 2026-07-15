@@ -3,12 +3,11 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import joinedload
 
-from app.core.dependencies import get_current_user, get_db
+from app.core.dependencies import get_current_customer, get_db
 from app.db.models.cart import CartItem
 from app.db.models.product import Product
 from app.db.models.user import User
@@ -46,7 +45,7 @@ class UpdateCartItemPayload(BaseModel):
 
 @router.get("", response_model=list[CartItemResponse])
 async def get_cart(
-    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+    user: User = Depends(get_current_customer), db: AsyncSession = Depends(get_db)
 ) -> list[CartItem]:
     result = await db.execute(
         select(CartItem)
@@ -59,8 +58,8 @@ async def get_cart(
 @router.post("", response_model=CartItemResponse, status_code=status.HTTP_201_CREATED)
 async def add_to_cart(
     payload: AddCartItemPayload,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    user: User = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
 ) -> CartItem:
     # Verify product exists and has stock
     product_result = await db.execute(
@@ -119,8 +118,8 @@ async def add_to_cart(
 async def update_cart_quantity(
     product_id: uuid.UUID,
     payload: UpdateCartItemPayload,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    user: User = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
 ) -> CartItem:
     if payload.quantity <= 0:
         raise HTTPException(
@@ -129,9 +128,7 @@ async def update_cart_quantity(
         )
 
     # Check if product exists and stock
-    product_result = await db.execute(
-        select(Product).where(Product.id == product_id)
-    )
+    product_result = await db.execute(select(Product).where(Product.id == product_id))
     product = product_result.scalar_one_or_none()
     if not product:
         raise HTTPException(
@@ -166,20 +163,22 @@ async def update_cart_quantity(
 @router.delete("/{product_id}")
 async def remove_from_cart(
     product_id: uuid.UUID,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    user: User = Depends(get_current_customer),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    result = await db.execute(
-        delete(CartItem).where(
-            CartItem.user_id == user.id, CartItem.product_id == product_id
-        )
+    stmt = select(CartItem).where(
+        CartItem.user_id == user.id, CartItem.product_id == product_id
     )
-    await db.commit()
+    res = await db.execute(stmt)
+    cart_item = res.scalar_one_or_none()
 
-    if result.rowcount == 0:
+    if not cart_item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Item not found in cart",
         )
+
+    await db.delete(cart_item)
+    await db.commit()
 
     return {"status": "success", "detail": "Item removed from cart."}

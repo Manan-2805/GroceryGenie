@@ -1,10 +1,10 @@
+import { MessageSquare, Mic, Send, X, ShieldAlert } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
-import { MessageSquare, Mic, MicOff, Send, X, ShieldAlert, Navigation } from 'lucide-react';
 
 import { useVoiceSession } from '../contexts/VoiceSessionContext';
-import { api } from '../services/api';
+import { useUIStore } from '../store/uiStore';
 
-interface Message {
+type Message = {
   role: 'user' | 'assistant';
   content: string;
 }
@@ -14,12 +14,14 @@ export const ChatBubble: React.FC = () => {
   const [mode, setMode] = useState<'select' | 'text' | 'voice'>('select');
   const [messages, setMessages] = useState<Message[]>([]);
   const [textInput, setTextInput] = useState('');
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [chatError, setChatError] = useState(false);
+
+  const { sessionId, setSessionId, voiceOk } = useUIStore();
 
   // Voice Session hook
   const { state: voiceState, startSession, endSession, sendPermissionResponse } = useVoiceSession();
-  
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -30,6 +32,7 @@ export const ChatBubble: React.FC = () => {
 
   const handleStartTextChat = () => {
     setMode('text');
+    setChatError(false);
     setMessages([{ role: 'assistant', content: 'Hi! I am your AI assistant. How can I help you today?' }]);
     // Reset session ID
     setSessionId(uuidv4());
@@ -58,7 +61,6 @@ export const ChatBubble: React.FC = () => {
     });
   };
 
-  // Text Mode SSE Stream Handler
   const sendTextMessage = async (
     msgText: string,
     approvedAction?: string,
@@ -70,11 +72,11 @@ export const ChatBubble: React.FC = () => {
       setMessages((prev) => [...prev, { role: 'user', content: msgText }]);
       setTextInput('');
     }
-    
+
     setIsSending(true);
 
     try {
-      // We add a loading placeholder assistant message
+      // Add loading placeholder message
       setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
 
       const response = await fetch('http://localhost:8000/api/v1/chat/text', {
@@ -82,6 +84,7 @@ export const ChatBubble: React.FC = () => {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include', // Pass JWT session cookie to backend
         body: JSON.stringify({
           message: msgText,
           session_id: sessionId,
@@ -89,6 +92,10 @@ export const ChatBubble: React.FC = () => {
           approved_payload: approvedPayload,
         }),
       });
+
+      if (!response.ok) {
+        throw new Error('Not authenticated or server unavailable');
+      }
 
       if (!response.body) throw new Error('No response stream body');
 
@@ -104,13 +111,6 @@ export const ChatBubble: React.FC = () => {
         const lines = rawText.split('\n');
 
         for (const line of lines) {
-          if (line.startsWith('event:')) {
-            // Check event type
-            const eventType = line.replace('event:', '').strip();
-            if (eventType === 'permission_request') {
-              // We will parse data in next line
-            }
-          }
           if (line.startsWith('data:')) {
             const dataStr = line.replace('data:', '').strip();
             try {
@@ -130,8 +130,8 @@ export const ChatBubble: React.FC = () => {
                   updated.pop();
                   return updated;
                 });
-                
-                // Expose a local permission UI in text chat
+
+                // Expose local permission UI in text chat
                 setMessages((prev) => [
                   ...prev,
                   {
@@ -155,10 +155,16 @@ export const ChatBubble: React.FC = () => {
       }
     } catch (e) {
       console.error(e);
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: 'Sorry, I encountered an error processing that.' },
-      ]);
+      setChatError(true);
+      setMessages((prev) => {
+        const updated = [...prev];
+        // Replace loading placeholder with error details
+        updated[updated.length - 1] = {
+          role: 'assistant',
+          content: 'Error: Failed to connect to GroceryGenie assistant. Please verify that you are logged in and the server is running.',
+        };
+        return updated;
+      });
     } finally {
       setIsSending(false);
     }
@@ -166,6 +172,7 @@ export const ChatBubble: React.FC = () => {
 
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (chatError || textInput.length > 200) return;
     sendTextMessage(textInput);
   };
 
@@ -201,18 +208,13 @@ export const ChatBubble: React.FC = () => {
     );
   };
 
-  // Helper string extension for quick cleaning
-  String.prototype.strip = function () {
-    return this.trim();
-  };
-
   return (
     <>
-      {/* Floating Chat Bubble */}
+      {/* Launcher Button */}
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-6 right-6 p-4 bg-gradient-to-tr from-purple-600 to-indigo-600 hover:scale-105 active:scale-95 shadow-xl hover:shadow-purple-500/20 text-white rounded-full z-50 transition-all duration-300 animate-bounce"
+          className="fixed bottom-6 right-6 p-4 bg-purple-600 text-white rounded-full shadow-2xl hover:bg-purple-700 hover:scale-105 transition-all duration-300 z-50 flex items-center justify-center"
         >
           <MessageSquare size={24} />
         </button>
@@ -241,25 +243,41 @@ export const ChatBubble: React.FC = () => {
 
           {/* Mode Selection */}
           {mode === 'select' && (
-            <div className="flex-1 p-6 flex flex-col justify-center items-center gap-6">
-              <h2 className="text-xl font-bold text-center text-gray-800 dark:text-gray-200">
-                Choose Chat Mode
-              </h2>
-              <div className="flex gap-4 w-full">
-                <button
-                  onClick={handleStartTextChat}
-                  className="flex-1 py-4 px-3 flex flex-col items-center justify-center gap-2 border border-purple-200 hover:border-purple-600 rounded-xl hover:bg-purple-50 dark:hover:bg-purple-950/20 transition-all"
-                >
-                  <MessageSquare size={32} className="text-purple-600" />
-                  <span className="font-semibold text-sm">Text Chat</span>
-                </button>
-                <button
-                  onClick={handleStartVoiceChat}
-                  className="flex-1 py-4 px-3 flex flex-col items-center justify-center gap-2 border border-purple-200 hover:border-purple-600 rounded-xl hover:bg-purple-50 dark:hover:bg-purple-950/20 transition-all"
-                >
-                  <Mic size={32} className="text-purple-600 animate-pulse" />
-                  <span className="font-semibold text-sm">Voice Chat</span>
-                </button>
+            <div className="flex-1 flex flex-col">
+              {!voiceOk && (
+                <div className="w-full p-3 bg-amber-500/10 border-b border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-semibold text-center flex items-center justify-center gap-1.5">
+                  <ShieldAlert size={14} className="shrink-0" />
+                  <span>Voice services are currently unavailable.</span>
+                </div>
+              )}
+              
+              <div className="flex-1 p-6 flex flex-col justify-center items-center gap-6">
+                <h2 className="text-xl font-bold text-center text-gray-800 dark:text-gray-200">
+                  Choose Chat Mode
+                </h2>
+                <div className="flex gap-4 w-full">
+                  <button
+                    onClick={handleStartTextChat}
+                    className="flex-1 py-4 px-3 flex flex-col items-center justify-center gap-2 border border-purple-200 hover:border-purple-600 rounded-xl hover:bg-purple-50 dark:hover:bg-purple-950/20 transition-all"
+                  >
+                    <MessageSquare size={32} className="text-purple-600" />
+                    <span className="font-semibold text-sm">Text Chat</span>
+                  </button>
+                  <button
+                    onClick={voiceOk ? handleStartVoiceChat : undefined}
+                    disabled={!voiceOk}
+                    className={`flex-1 py-4 px-3 flex flex-col items-center justify-center gap-2 border rounded-xl transition-all ${
+                      voiceOk
+                        ? 'border-purple-200 hover:border-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950/20'
+                        : 'border-gray-200 dark:border-gray-800 opacity-40 cursor-not-allowed'
+                    }`}
+                  >
+                    <Mic size={32} className="text-purple-600" />
+                    <span className="font-semibold text-sm">
+                      {voiceOk ? 'Voice Chat' : 'Voice Disabled'}
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -268,16 +286,16 @@ export const ChatBubble: React.FC = () => {
           {mode === 'text' && (
             <>
               {/* Message List */}
-              <div className="flex-1 p-4 overflow-y-auto space-y-3 flex flex-col">
+              <div className="flex-1 p-4 overflow-y-auto space-y-3 flex flex-col bg-gray-50/50 dark:bg-gray-950/10">
                 {messages.map((m, idx) => {
                   const isUser = m.role === 'user';
                   const isPermissionRequest = m.content.startsWith('[PERMISSION_REQUEST]');
-                  
+
                   if (isPermissionRequest) {
                     const parts = m.content.replace('[PERMISSION_REQUEST] ', '').split('|');
                     return (
                       <div key={idx}>
-                        {renderPermissionBox(parts[0], parts[1], parts[2])}
+                        {renderPermissionBox(parts[0] || '', parts[1] || '', parts[2] || '{}')}
                       </div>
                     );
                   }
@@ -285,11 +303,10 @@ export const ChatBubble: React.FC = () => {
                   return (
                     <div
                       key={idx}
-                      className={`max-w-[80%] p-3 rounded-2xl text-sm ${
-                        isUser
-                          ? 'bg-purple-600 text-white self-end rounded-tr-none'
-                          : 'bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 self-start rounded-tl-none'
-                      }`}
+                      className={`max-w-[80%] p-3 rounded-2xl text-sm ${isUser
+                        ? 'bg-purple-600 text-white self-end rounded-tr-none'
+                        : 'bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 self-start rounded-tl-none border dark:border-gray-850'
+                        }`}
                     >
                       {m.content || (
                         <div className="flex gap-1 items-center justify-center py-1">
@@ -305,18 +322,20 @@ export const ChatBubble: React.FC = () => {
               </div>
 
               {/* Message Input */}
-              <form onSubmit={handleTextSubmit} className="p-3 border-t dark:border-gray-900 flex gap-2">
+              <form onSubmit={handleTextSubmit} className="p-3 border-t dark:border-gray-900 flex gap-2 bg-white dark:bg-gray-950">
                 <input
                   type="text"
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
-                  placeholder="Type your message..."
-                  className="flex-1 px-4 py-2 border dark:border-gray-800 bg-transparent rounded-full focus:outline-none focus:ring-1 focus:ring-purple-600 text-sm"
+                  placeholder={chatError ? "Chat connection error..." : "Type your message..."}
+                  maxLength={200}
+                  disabled={isSending || chatError}
+                  className="flex-1 px-4 py-2 border dark:border-gray-800 bg-transparent rounded-full focus:outline-none focus:ring-1 focus:ring-purple-600 text-sm disabled:opacity-50"
                 />
                 <button
                   type="submit"
-                  disabled={isSending}
-                  className="p-2 bg-purple-600 text-white rounded-full hover:bg-purple-700 disabled:bg-purple-400 transition"
+                  disabled={isSending || chatError || !textInput.trim()}
+                  className="p-2 bg-purple-600 text-white rounded-full hover:bg-purple-700 disabled:bg-purple-400 dark:disabled:bg-gray-800 transition"
                 >
                   <Send size={18} />
                 </button>
@@ -327,7 +346,14 @@ export const ChatBubble: React.FC = () => {
           {/* Voice Chat Panel */}
           {mode === 'voice' && (
             <div className="flex-1 p-6 flex flex-col justify-between items-center bg-gray-50 dark:bg-gray-900/10">
-              <div className="text-center space-y-4">
+              <div className="text-center space-y-4 w-full">
+                {voiceState.error && (
+                  <div className="p-3 border border-red-300 dark:border-red-950/40 bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 rounded-xl text-xs font-semibold text-left flex items-start gap-2 max-w-[320px] mx-auto">
+                    <ShieldAlert size={16} className="shrink-0 mt-0.5" />
+                    <span>{voiceState.error}</span>
+                  </div>
+                )}
+
                 <h4 className="text-xs uppercase tracking-widest text-purple-600 dark:text-purple-400 font-bold">
                   {voiceState.status === 'transcribing' && 'Listening...'}
                   {voiceState.status === 'thinking' && 'Thinking...'}
@@ -336,41 +362,40 @@ export const ChatBubble: React.FC = () => {
                   {voiceState.status === 'waiting_permission' && 'Verification Needed'}
                 </h4>
 
-                {/* Animated wave bubble */}
-                <div className="flex justify-center my-8">
-                  <div
-                    className={`p-8 rounded-full border-4 ${
-                      voiceState.status === 'speaking'
-                        ? 'border-green-500 bg-green-500/10 animate-pulse'
-                        : voiceState.status === 'thinking'
-                          ? 'border-indigo-500 bg-indigo-500/10 animate-spin [animation-duration:3s]'
-                          : voiceState.status === 'transcribing'
-                            ? 'border-purple-600 bg-purple-600/10 animate-ping'
-                            : 'border-purple-300 dark:border-purple-900'
-                    }`}
-                  >
-                    <Mic size={48} className="text-purple-600 dark:text-purple-400" />
+                <div className="flex justify-center py-6">
+                  <div className="relative">
+                    {/* Pulsing ring indicator */}
+                    {(voiceState.status === 'speaking' || voiceState.status === 'transcribing') && (
+                      <div className="absolute inset-0 rounded-full bg-purple-500/20 animate-ping" />
+                    )}
+
+                    <div className="w-24 h-24 rounded-full bg-purple-100 dark:bg-purple-900/20 flex items-center justify-center shadow-inner border border-purple-200 dark:border-purple-900/50">
+                      <Mic size={40} className="text-purple-600 dark:text-purple-400" />
+                    </div>
                   </div>
                 </div>
 
-                {/* Real-time transcript display */}
-                <div className="min-h-[60px] max-w-[280px] mx-auto text-sm italic text-gray-700 dark:text-gray-300 font-medium">
-                  "{voiceState.transcript || 'Speak now...'}"
+                <div className="min-h-[60px] max-h-[120px] overflow-y-auto px-4 py-2 border dark:border-gray-800 rounded-xl bg-white dark:bg-gray-950 text-left">
+                  <p className="text-xs text-gray-500 dark:text-gray-400 italic">
+                    {voiceState.transcript || '"Speak now..."'}
+                  </p>
                 </div>
               </div>
 
-              {/* Permission Alert Box for Voice Mode */}
-              {voiceState.permissionRequest && (
-                <div className="w-full p-4 border border-amber-300 dark:border-amber-500 bg-amber-50 dark:bg-amber-950/20 rounded-xl mb-4 text-left">
-                  <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-bold mb-2">
+              {/* Permission Modal inside Voice Chat */}
+              {voiceState.status === 'waiting_permission' && voiceState.permissionRequest && (
+                <div className="w-full p-4 border dark:border-gray-800 rounded-2xl bg-white dark:bg-gray-950 shadow-lg text-left space-y-3 z-10 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="flex items-center gap-2 text-amber-500 font-bold text-xs uppercase tracking-wider">
                     <ShieldAlert size={16} />
-                    <span className="text-xs">Cart Approval Required</span>
+                    <span>Permission Requested</span>
                   </div>
-                  <p className="text-xs font-semibold mb-3">{voiceState.permissionRequest.summary}</p>
-                  <div className="flex gap-2">
+                  <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 leading-relaxed">
+                    {voiceState.permissionRequest.summary}
+                  </p>
+                  <div className="flex gap-2 justify-end">
                     <button
                       onClick={() => sendPermissionResponse(true)}
-                      className="px-3 py-1 bg-amber-500 text-white rounded-lg text-xs font-bold"
+                      className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold"
                     >
                       Yes, approve
                     </button>
@@ -387,7 +412,10 @@ export const ChatBubble: React.FC = () => {
               {/* Control Actions */}
               <div className="flex gap-4">
                 <button
-                  onClick={endSession}
+                  onClick={() => {
+                    endSession();
+                    setMode('select');
+                  }}
                   className="py-2 px-6 bg-red-500 hover:bg-red-600 text-white rounded-full font-bold text-sm transition"
                 >
                   Disconnect
@@ -401,9 +429,15 @@ export const ChatBubble: React.FC = () => {
   );
 };
 
-// TS declaration for custom strip helper on String
+// String utility strip helper polyfill
 declare global {
   interface String {
     strip(): string;
   }
+}
+
+if (!String.prototype.strip) {
+  String.prototype.strip = function () {
+    return this.trim();
+  };
 }

@@ -12,8 +12,9 @@ _model: SentenceTransformer | None = None
 def get_embedder() -> SentenceTransformer:
     global _model
     if _model is None:
-        from pathlib import Path
-        local_path = Path(__file__).resolve().parent.parent.parent.parent / "models" / "BAAI" / "bge-small-en-v1.5"
+        from app.core.config import MODELS_DIR
+
+        local_path = MODELS_DIR / "BAAI" / "bge-small-en-v1.5"
         if local_path.exists() and local_path.is_dir():
             model_to_load = str(local_path)
             logger.info(f"Loading local embedding model from: {model_to_load}...")
@@ -29,5 +30,5 @@ def embed_text(text: str) -> list[float]:
     embedding = model.encode(text)
     # Ensure it returns a list of floats
     if hasattr(embedding, "tolist"):
-        return embedding.tolist()  # type: ignore
+        return embedding.tolist()
     return list(embedding)

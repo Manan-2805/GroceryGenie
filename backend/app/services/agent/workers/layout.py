@@ -22,9 +22,11 @@ class StoreLayoutWorker(BaseWorker):
         # 1. Try to find product ID from previous subgoal outputs
         product_id: uuid.UUID | None = None
         product_name = ""
-        
+
         for sg_res in self.subgoal_results.values():
-            if sg_res.get("status") == "success" and isinstance(sg_res.get("output"), list):
+            if sg_res.get("status") == "success" and isinstance(
+                sg_res.get("output"), list
+            ):
                 outputs = sg_res["output"]
                 if outputs:
                     product_id = uuid.UUID(outputs[0]["id"])
@@ -35,10 +37,16 @@ class StoreLayoutWorker(BaseWorker):
         if not product_id:
             # Try to extract potential product name from goal (e.g. "what's near oat milk")
             # We can run a simple query matching keywords
-            words = [w for w in goal.split() if w.lower() not in ["what's", "near", "the", "find", "layout", "aisle"]]
+            words = [
+                w
+                for w in goal.split()
+                if w.lower() not in ["what's", "near", "the", "find", "layout", "aisle"]
+            ]
             if words:
                 keyword = " ".join(words)
-                logger.info(f"Searching database for layout reference product: '{keyword}'")
+                logger.info(
+                    f"Searching database for layout reference product: '{keyword}'"
+                )
                 result = await db.execute(
                     select(Product)
                     .where(Product.is_active, Product.name.ilike(f"%{keyword}%"))
