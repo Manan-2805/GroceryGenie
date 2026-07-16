@@ -22,14 +22,14 @@ User's goal:
 {goal}
 
 You MUST return a JSON object containing:
-{
+{{
   "action": "add_to_cart" or "remove_from_cart" or "update_cart_quantity",
   "product_id": "UUID string of the chosen product",
   "product_name": "Name of the chosen product",
   "quantity": integer quantity,
   "price": float price of the chosen product,
   "reason": "Brief reason for choosing this product (e.g. 'Cheapest option found')"
-}
+}}
 
 Output ONLY raw JSON. No markdown formatting, no code blocks."""
 

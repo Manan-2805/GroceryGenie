@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
-import { useUIStore } from '../store/uiStore';
+import React, { useState } from 'react';
+
 import { healthService } from '../services/api';
+import { useUIStore } from '../store/uiStore';
 
 export const Maintenance: React.FC = () => {
   const { setBackendUnreachable } = useUIStore();
@@ -12,11 +13,12 @@ export const Maintenance: React.FC = () => {
     setRetrying(true);
     setErrorMsg(null);
     try {
-      // Test backend health
       await healthService.checkApiHealth();
-      setBackendUnreachable(false); // Triggers auto redirect to home
-    } catch (e: any) {
-      setErrorMsg('The server is still unreachable. Please verify your connection or try again later.');
+      setBackendUnreachable(false);
+    } catch {
+      setErrorMsg(
+        'The server is still unreachable. Please verify your connection or try again later.'
+      );
     } finally {
       setRetrying(false);
     }
@@ -25,7 +27,6 @@ export const Maintenance: React.FC = () => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-white dark:bg-[#0f1015] p-6 transition-colors duration-300">
       <div className="max-w-md w-full text-center space-y-8">
-
         {/* Visual Icon with Premium Gradient & Pulse effect */}
         <div className="relative inline-flex items-center justify-center">
           <div className="absolute inset-0 rounded-full bg-amber-500/20 blur-xl animate-pulse" />
@@ -40,12 +41,13 @@ export const Maintenance: React.FC = () => {
             Service Unreachable
           </h1>
           <p className="text-gray-600 dark:text-gray-400 text-sm leading-relaxed">
-            We are having trouble connecting to the GroceryGenie backend. The server might be undergoing maintenance or temporarily offline.
+            We are having trouble connecting to the GroceryGenie backend. The server might be
+            undergoing maintenance or temporarily offline.
           </p>
         </div>
 
         {/* Dynamic Error Status Message */}
-        {errorMsg && (
+        {errorMsg !== null && errorMsg !== '' && (
           <div className="p-3 text-xs font-semibold rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-100 dark:border-red-950/30 text-red-500 transition-all duration-300">
             {errorMsg}
           </div>

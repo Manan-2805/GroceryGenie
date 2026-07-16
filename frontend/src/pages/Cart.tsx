@@ -22,6 +22,17 @@ export const Cart: React.FC = () => {
     setDialogOpen(true);
   };
 
+  const closeDialog = () => {
+    setDialogOpen(false);
+  };
+
+  const dialogProps = {
+    isOpen: dialogOpen,
+    onClose: closeDialog,
+    title: dialogTitle,
+    message: dialogMessage,
+  };
+
   const fetchCart = async () => {
     try {
       const data = await cartService.get();
@@ -34,21 +45,28 @@ export const Cart: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchCart();
+    void fetchCart();
   }, []);
 
   const handleUpdateQuantity = async (productId: string, currentQty: number, change: number) => {
     const newQty = currentQty + change;
     if (newQty <= 0) return;
-    
+
     setUpdatingId(productId);
     try {
       await cartService.update(productId, newQty);
       await fetchCart();
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      const detail = e.response?.data?.detail;
-      showDialog('Error', detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : 'Failed to update cart quantity.');
+      const detail = (e as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+      showDialog(
+        'Error',
+        detail !== undefined && detail !== null
+          ? typeof detail === 'string'
+            ? detail
+            : JSON.stringify(detail)
+          : 'Failed to update cart quantity.'
+      );
     } finally {
       setUpdatingId(null);
     }
@@ -77,7 +95,11 @@ export const Cart: React.FC = () => {
       render: (_, item) => (
         <div className="w-12 h-12 bg-gray-50 dark:bg-gray-900/40 rounded-lg p-1 flex items-center justify-center">
           <img
-            src={item.product.image_url || 'https://via.placeholder.com/80'}
+            src={
+              typeof item.product.image_url === 'string' && item.product.image_url.trim().length > 0
+                ? item.product.image_url
+                : 'https://via.placeholder.com/80'
+            }
             alt={item.product.name}
             className="h-full object-contain rounded"
           />
@@ -90,9 +112,7 @@ export const Cart: React.FC = () => {
       sortable: true,
       filterable: true,
       render: (_, item) => (
-        <span className="font-semibold text-gray-800 dark:text-gray-200">
-          {item.product.name}
-        </span>
+        <span className="font-semibold text-gray-800 dark:text-gray-200">{item.product.name}</span>
       ),
     },
     {
@@ -109,7 +129,9 @@ export const Cart: React.FC = () => {
         <div className="flex items-center border dark:border-gray-800 rounded-lg overflow-hidden bg-white dark:bg-gray-950 w-fit">
           <button
             disabled={updatingId !== null || item.quantity <= 1}
-            onClick={() => handleUpdateQuantity(item.product_id, item.quantity, -1)}
+            onClick={() => {
+              void handleUpdateQuantity(item.product_id, item.quantity, -1);
+            }}
             className="px-2 py-0.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900 disabled:opacity-50 text-xs font-bold"
           >
             -
@@ -117,7 +139,9 @@ export const Cart: React.FC = () => {
           <span className="px-2 text-xs font-bold">{item.quantity}</span>
           <button
             disabled={updatingId !== null || item.quantity >= item.product.stock}
-            onClick={() => handleUpdateQuantity(item.product_id, item.quantity, 1)}
+            onClick={() => {
+              void handleUpdateQuantity(item.product_id, item.quantity, 1);
+            }}
             className="px-2 py-0.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900 disabled:opacity-50 text-xs font-bold"
           >
             +
@@ -141,7 +165,9 @@ export const Cart: React.FC = () => {
       render: (_, item) => (
         <button
           disabled={updatingId !== null}
-          onClick={() => handleRemoveItem(item.product_id)}
+          onClick={() => {
+            void handleRemoveItem(item.product_id);
+          }}
           className="text-red-500 hover:text-red-600 p-1 rounded transition"
         >
           <Trash2 size={16} />
@@ -186,12 +212,16 @@ export const Cart: React.FC = () => {
 
           {/* Cart Summary */}
           <div className="border rounded-2xl glassmorphism p-6 shadow-md space-y-6">
-            <h3 className="font-extrabold text-lg text-gray-800 dark:text-gray-200">Cart Summary</h3>
-            
+            <h3 className="font-extrabold text-lg text-gray-800 dark:text-gray-200">
+              Cart Summary
+            </h3>
+
             <div className="divide-y divide-gray-100 dark:divide-gray-900 space-y-3">
               <div className="flex justify-between text-sm py-2">
                 <span className="text-gray-500">Subtotal</span>
-                <span className="font-semibold text-gray-800 dark:text-gray-200">€{total.toFixed(2)}</span>
+                <span className="font-semibold text-gray-800 dark:text-gray-200">
+                  €{total.toFixed(2)}
+                </span>
               </div>
               <div className="flex justify-between text-sm py-2">
                 <span className="text-gray-500">Delivery</span>
@@ -214,12 +244,7 @@ export const Cart: React.FC = () => {
         </div>
       )}
 
-      <CustomDialog
-        isOpen={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        title={dialogTitle}
-        message={dialogMessage}
-      />
+      <CustomDialog {...dialogProps} />
     </div>
   );
 };

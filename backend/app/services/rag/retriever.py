@@ -119,12 +119,12 @@ async def hybrid_search_products(
 
         qdrant_filter = qmodels.Filter(must=must_filters) if must_filters else None
 
-        search_results = client.search(  # type: ignore[attr-defined]
+        search_results = client.query_points(
             collection_name=COLLECTION_NAME,
-            query_vector=query_vector,
+            query=query_vector,
             query_filter=qdrant_filter,
             limit=limit * 2,  # Fetch more to allow merging
-        )
+        ).points
         vector_hits = [
             uuid.UUID(hit.payload["id"]) for hit in search_results if hit.payload
         ]

@@ -1,20 +1,28 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ShoppingCart, Settings as SettingsIcon, LogOut, ShoppingBag } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Link,
+  useNavigate,
+  useLocation,
+  Navigate,
+} from 'react-router-dom';
 
 import { ChatBubble } from './components/ChatBubble';
 import { VoiceSessionProvider } from './contexts/VoiceSessionContext';
 import { Cart } from './pages/Cart';
 import { Catalog } from './pages/Catalog';
 import { Checkout } from './pages/Checkout';
+import { ErrorPage } from './pages/ErrorPage';
 import { FulfillmentQueue } from './pages/FulfillmentQueue';
 import { Home } from './pages/Home';
 import { InventoryManagement } from './pages/InventoryManagement';
 import { ItemDetail } from './pages/ItemDetail';
 import { Login } from './pages/Login';
 import { Maintenance } from './pages/Maintenance';
-import { ErrorPage } from './pages/ErrorPage';
 import { Orders } from './pages/Orders';
 import { SellerAnalysis } from './pages/SellerAnalysis';
 import { SellerDashboard } from './pages/SellerDashboard';
@@ -28,10 +36,11 @@ const queryClient = new QueryClient();
 const NavigationListener: React.FC = () => {
   const navigate = useNavigate();
   useEffect(() => {
-    const handleNavigation = (event: any) => {
-      const { path } = event.detail;
-      if (path) {
-        navigate(path);
+    const handleNavigation = (event: Event) => {
+      const customEvent = event as CustomEvent<{ path?: string }>;
+      const path = customEvent.detail?.path;
+      if (typeof path === 'string' && path.trim().length > 0) {
+        void navigate(path);
       }
     };
     window.addEventListener('agent-navigate', handleNavigation);
@@ -42,6 +51,11 @@ const NavigationListener: React.FC = () => {
 };
 
 export const AppContent: React.FC = () => {
+  if (import.meta.env.DEV) {
+    // eslint-disable-next-line no-console
+    console.log('[Dev Render] App / AppContent');
+  }
+
   const { theme, backendUnreachable, appError } = useUIStore();
   const [user, setUser] = useState<{ name: string; role: string } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,49 +64,48 @@ export const AppContent: React.FC = () => {
 
   const isMaintenancePage = location.pathname === '/maintenance';
   const isErrorPage = location.pathname === '/error';
+  const hasBackendUnreachable = backendUnreachable === true;
+  const hasAppError = typeof appError === 'string' && appError.trim().length > 0;
 
   useEffect(() => {
-    if (backendUnreachable && location.pathname !== '/maintenance') {
-      navigate('/maintenance');
-    } else if (!backendUnreachable && location.pathname === '/maintenance') {
-      navigate('/');
+    if (hasBackendUnreachable && location.pathname !== '/maintenance') {
+      void navigate('/maintenance');
+    } else if (!hasBackendUnreachable && location.pathname === '/maintenance') {
+      void navigate('/');
     }
 
-    if (appError && location.pathname !== '/error') {
-      navigate('/error');
-    } else if (!appError && location.pathname === '/error') {
-      navigate('/');
+    if (hasAppError && location.pathname !== '/error') {
+      void navigate('/error');
+    } else if (!hasAppError && location.pathname === '/error') {
+      void navigate('/');
     }
-  }, [backendUnreachable, appError, location.pathname, navigate]);
+  }, [hasAppError, hasBackendUnreachable, location.pathname, navigate]);
 
-  const fetchProfile = async () => {
+  const fetchProfile = useCallback(async () => {
     try {
       const data = await authService.getMe();
       setUser({ name: data.name, role: data.role });
     } catch {
-      // Not logged in
       setUser(null);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const checkHealth = async () => {
+  const checkHealth = useCallback(async () => {
     try {
       const data = await healthService.checkApiHealth();
       useUIStore.getState().setVoiceOk(data.voice_ok);
-    } catch (e) {
-      console.error("Health check failed", e);
+    } catch (error) {
+      console.error('Health check failed', error);
       useUIStore.getState().setVoiceOk(false);
     }
-  };
-
-  useEffect(() => {
-    fetchProfile();
-    checkHealth();
   }, []);
 
-
+  useEffect(() => {
+    void fetchProfile();
+    void checkHealth();
+  }, [checkHealth, fetchProfile]);
 
   const handleLogout = async () => {
     try {
@@ -103,7 +116,7 @@ export const AppContent: React.FC = () => {
     }
   };
 
-  const handleRoleChange = async (newRole: 'customer' | 'seller') => {
+  async function handleRoleChange(newRole: 'customer' | 'seller') {
     try {
       await authService.switchRole(newRole);
       const data = await authService.getMe();
@@ -111,6 +124,11 @@ export const AppContent: React.FC = () => {
     } catch (e) {
       console.error(e);
     }
+  }
+
+  const settingsProps = {
+    userRole: user?.role ?? 'customer',
+    onRoleChange: handleRoleChange,
   };
 
   // Initialize Dark Theme configuration
@@ -126,7 +144,7 @@ export const AppContent: React.FC = () => {
     );
   }
 
-  if (!user && !isMaintenancePage && !isErrorPage) {
+  if (user === null && !isMaintenancePage && !isErrorPage) {
     return <Login onLoginSuccess={fetchProfile} />;
   }
 
@@ -138,13 +156,34 @@ export const AppContent: React.FC = () => {
       <header className="sticky top-0 z-40 border-b border-gray-100 dark:border-gray-900 bg-white/80 dark:bg-[#0f1015]/80 backdrop-blur-md">
         <div className="w-full px-4 md:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-8">
-            <Link to="/" className="text-xl font-black bg-gradient-to-r from-purple-600 to-indigo-600 bg-clip-text text-transparent">
+            <Link
+              to={user?.role === 'seller' ? '/seller' : '/'}
+              className="text-xl font-black bg-gradient-to-r from-purple-600 to-indigo-600 bg-clip-text text-transparent"
+            >
               GroceryGenie
             </Link>
 
-            <nav className="hidden md:flex items-center gap-6 text-sm font-semibold text-gray-600 dark:text-gray-400">
+            <nav className="hidden md:flex items-center gap-6 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-450">
               {user?.role === 'customer' && (
-                <Link to="/items" className="hover:text-purple-600 transition">Catalog</Link>
+                <Link to="/items" className="hover:text-purple-600 transition">
+                  Catalog
+                </Link>
+              )}
+              {user?.role === 'seller' && (
+                <>
+                  <Link to="/seller" className="hover:text-purple-600 transition">
+                    Dashboard
+                  </Link>
+                  <Link to="/fulfillment" className="hover:text-purple-600 transition">
+                    Fulfillment Queue
+                  </Link>
+                  <Link to="/inventory" className="hover:text-purple-600 transition">
+                    Inventory
+                  </Link>
+                  <Link to="/analysis" className="hover:text-purple-600 transition">
+                    Analysis
+                  </Link>
+                </>
               )}
             </nav>
           </div>
@@ -153,10 +192,16 @@ export const AppContent: React.FC = () => {
             {/* Cart & Orders Icons (Customer Only) */}
             {user?.role === 'customer' && (
               <>
-                <Link to="/orders" className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg relative text-gray-600 dark:text-gray-400">
+                <Link
+                  to="/orders"
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg relative text-gray-600 dark:text-gray-400"
+                >
                   <ShoppingBag size={20} />
                 </Link>
-                <Link to="/cart" className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg relative text-gray-600 dark:text-gray-400">
+                <Link
+                  to="/cart"
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg relative text-gray-600 dark:text-gray-400"
+                >
                   <ShoppingCart size={20} />
                 </Link>
               </>
@@ -170,11 +215,18 @@ export const AppContent: React.FC = () => {
                   <p className="text-[10px] text-purple-600 capitalize font-medium">{user.role}</p>
                 </div>
 
-                <Link to="/settings" className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg text-gray-600 dark:text-gray-400">
+                <Link
+                  to="/settings"
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg text-gray-600 dark:text-gray-400"
+                >
                   <SettingsIcon size={20} />
                 </Link>
 
-                <button id="logout-btn" onClick={handleLogout} className="p-2 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg text-red-500">
+                <button
+                  id="logout-btn"
+                  onClick={handleLogout}
+                  className="p-2 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg text-red-500"
+                >
                   <LogOut size={20} />
                 </button>
               </div>
@@ -186,17 +238,47 @@ export const AppContent: React.FC = () => {
       {/* Main Page Layout Wrapper */}
       <main className="flex-1 w-full px-4 md:px-8 pb-24">
         <Routes>
-          <Route path="/" element={user?.role === 'seller' ? <Navigate to="/seller" /> : <Home />} />
-          <Route path="/items" element={user?.role === 'seller' ? <Navigate to="/seller" /> : <Catalog />} />
-          <Route path="/items/:id" element={user?.role === 'seller' ? <Navigate to="/seller" /> : <ItemDetail />} />
-          <Route path="/cart" element={user?.role === 'customer' ? <Cart /> : <Navigate to="/seller" />} />
-          <Route path="/checkout" element={user?.role === 'customer' ? <Checkout /> : <Navigate to="/seller" />} />
-          <Route path="/orders" element={user?.role === 'customer' ? <Orders /> : <Navigate to="/seller" />} />
-          <Route path="/settings" element={<Settings userRole={user?.role || 'customer'} onRoleChange={handleRoleChange} />} />
-          <Route path="/seller" element={user?.role === 'seller' ? <SellerDashboard /> : <Navigate to="/items" />} />
-          <Route path="/fulfillment" element={user?.role === 'seller' ? <FulfillmentQueue /> : <Navigate to="/items" />} />
-          <Route path="/inventory" element={user?.role === 'seller' ? <InventoryManagement /> : <Navigate to="/items" />} />
-          <Route path="/analysis" element={user?.role === 'seller' ? <SellerAnalysis /> : <Navigate to="/items" />} />
+          <Route
+            path="/"
+            element={user?.role === 'seller' ? <Navigate to="/seller" /> : <Home />}
+          />
+          <Route
+            path="/items"
+            element={user?.role === 'seller' ? <Navigate to="/seller" /> : <Catalog />}
+          />
+          <Route
+            path="/items/:id"
+            element={user?.role === 'seller' ? <Navigate to="/seller" /> : <ItemDetail />}
+          />
+          <Route
+            path="/cart"
+            element={user?.role === 'customer' ? <Cart /> : <Navigate to="/seller" />}
+          />
+          <Route
+            path="/checkout"
+            element={user?.role === 'customer' ? <Checkout /> : <Navigate to="/seller" />}
+          />
+          <Route
+            path="/orders"
+            element={user?.role === 'customer' ? <Orders /> : <Navigate to="/seller" />}
+          />
+          <Route path="/settings" element={<Settings {...settingsProps} />} />
+          <Route
+            path="/seller"
+            element={user?.role === 'seller' ? <SellerDashboard /> : <Navigate to="/items" />}
+          />
+          <Route
+            path="/fulfillment"
+            element={user?.role === 'seller' ? <FulfillmentQueue /> : <Navigate to="/items" />}
+          />
+          <Route
+            path="/inventory"
+            element={user?.role === 'seller' ? <InventoryManagement /> : <Navigate to="/items" />}
+          />
+          <Route
+            path="/analysis"
+            element={user?.role === 'seller' ? <SellerAnalysis /> : <Navigate to="/items" />}
+          />
           <Route path="/maintenance" element={<Maintenance />} />
           <Route path="/error" element={<ErrorPage />} />
         </Routes>

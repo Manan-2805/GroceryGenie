@@ -1,56 +1,100 @@
 import axios from 'axios';
+
 import { useUIStore } from '../store/uiStore';
 
 // Detect base API URL
-const BASE_URL = import.meta.env.DEV
-  ? 'http://localhost:8000/api/v1'
-  : '/api/v1';
+const BASE_URL = '/api/v1';
+
+type ApiError = Error & {
+  response?: {
+    data?: {
+      detail?: unknown;
+    };
+    status?: number;
+  };
+  code?: string;
+  message?: string;
+};
+
+type UnknownRecord = Record<string, unknown>;
+
+type ApiResponse<T> = {
+  data: T;
+};
+
+const isApiResponse = <T>(payload: ApiResponse<T> | T): payload is ApiResponse<T> => {
+  return typeof payload === 'object' && payload !== null && 'data' in payload;
+};
+
+const extractApiData = <T>(payload: ApiResponse<T> | T): T => {
+  return isApiResponse(payload) ? payload.data : payload;
+};
 
 export const api = axios.create({
   baseURL: BASE_URL,
-  withCredentials: true, // Crucial for httpOnly JWT cookie
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// Response interceptor to convert decimal strings to numbers
-api.interceptors.response.use((response) => {
-  const convertNumericFields = (obj: any): any => {
-    if (obj === null || obj === undefined) return obj;
-    if (Array.isArray(obj)) {
-      return obj.map(convertNumericFields);
-    }
-    if (typeof obj === 'object') {
-      for (const key in obj) {
-        if (['price', 'total', 'avg_rating', 'price_at_purchase'].includes(key) && obj[key] !== null) {
-          obj[key] = Number(obj[key]);
-        } else {
-          obj[key] = convertNumericFields(obj[key]);
-        }
+api.interceptors.response.use(
+  (response) => {
+    const convertNumericFields = (value: unknown): unknown => {
+      if (value === null || value === undefined) return value;
+      if (Array.isArray(value)) {
+        return value.map((item) => convertNumericFields(item));
       }
-    }
-    return obj;
-  };
-  response.data = convertNumericFields(response.data);
-  return response;
-}, (error) => {
-  if (!error.response || error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
-    useUIStore.getState().setBackendUnreachable(true);
-  } else if (error.response && error.response.status >= 500) {
-    const detail = error.response.data?.detail || error.message;
-    useUIStore.getState().setAppError(typeof detail === 'string' ? detail : JSON.stringify(detail));
-  }
-  return Promise.reject(error);
-});
+      if (typeof value === 'object') {
+        const record = value as UnknownRecord;
+        const converted: UnknownRecord = {};
+        for (const [key, item] of Object.entries(record)) {
+          if (
+            ['price', 'total', 'avg_rating', 'price_at_purchase'].includes(key) &&
+            item !== null &&
+            item !== undefined
+          ) {
+            const numericValue = typeof item === 'number' ? item : Number(item);
+            converted[key] = Number.isFinite(numericValue) ? numericValue : item;
+          } else {
+            converted[key] = convertNumericFields(item);
+          }
+        }
+        return converted;
+      }
+      return value;
+    };
 
+    response.data = convertNumericFields(response.data);
+    return response;
+  },
+  (error: unknown) => {
+    const axiosError = error as ApiError;
+    if (
+      !axiosError.response ||
+      axiosError.code === 'ERR_NETWORK' ||
+      axiosError.message === 'Network Error'
+    ) {
+      useUIStore.getState().setBackendUnreachable(true);
+    } else if (
+      typeof axiosError.response?.status === 'number' &&
+      axiosError.response.status >= 500
+    ) {
+      const detail = axiosError.response.data?.detail ?? axiosError.message;
+      useUIStore
+        .getState()
+        .setAppError(typeof detail === 'string' ? detail : JSON.stringify(detail));
+    }
+    return Promise.reject(error);
+  }
+);
 
 export type UserProfile = {
   id: string;
   email: string;
   name: string;
   role: 'customer' | 'seller';
-}
+};
 
 export type Product = {
   id: string;
@@ -64,7 +108,7 @@ export type Product = {
   avg_rating: number;
   sold_count: number;
   is_active: boolean;
-}
+};
 
 export type CartItem = {
   id: string;
@@ -77,16 +121,16 @@ export type CartItem = {
     image_url?: string;
     stock: number;
   };
-}
+};
 
-export type rating = {
+export type Rating = {
   stars: number;
-  comment: string
-}
+  comment: string;
+};
 
 export type OrderItem = {
   id: string;
-  rating: rating;
+  rating: Rating | null;
   product_id?: string;
   quantity: number;
   price_at_purchase: number;
@@ -95,28 +139,29 @@ export type OrderItem = {
     name: string;
     price: number;
     image_url?: string;
+    category?: string;
   };
-}
+};
 
 export type Order = {
   id: string;
   customer_id: string;
   status: 'placed' | 'packed' | 'out_for_delivery' | 'delivered';
   total: number;
-  delivery_address: Record<string, any>;
+  delivery_address: Record<string, unknown>;
   created_at: string;
-  packed_at: string;
-  out_for_delivery_at: string;
-  delivered_at: string;
+  packed_at: string | null;
+  out_for_delivery_at: string | null;
+  delivered_at: string | null;
   items: OrderItem[];
-}
+};
 
 export type PersistentFact = {
   id: string;
   fact_text: string;
   category: 'dietary' | 'preference' | 'instruction' | 'other';
   created_at: string;
-}
+};
 
 export type Address = {
   id: string;
@@ -129,33 +174,54 @@ export type Address = {
   postal_code: string;
   country: string;
   is_default: boolean;
-}
+};
 
+export type AuthResponse = {
+  role: string;
+  name: string;
+};
 
-// API Services
+export type HealthStatus = {
+  voice_ok: boolean;
+  status: string;
+  [key: string]: unknown;
+};
+
+const isWrappedHealthStatus = (
+  payload: ApiResponse<HealthStatus> | HealthStatus
+): payload is ApiResponse<HealthStatus> => {
+  if (typeof payload !== 'object' || payload === null) return false;
+  if (!('data' in payload)) return false;
+  const maybeData = payload.data;
+  return typeof maybeData === 'object' && maybeData !== null;
+};
+
 export const authService = {
   getMe: async (): Promise<UserProfile> => {
-    const res = await api.get('/auth/me');
-    return res.data;
+    const res = await api.get<ApiResponse<UserProfile> | UserProfile>('/auth/me');
+    return extractApiData(res.data);
   },
-  register: async (data: any): Promise<{ role: string; name: string }> => {
-    const res = await api.post('/auth/register', data);
-    return res.data;
+  register: async (data: UnknownRecord): Promise<AuthResponse> => {
+    const res = await api.post<ApiResponse<AuthResponse> | AuthResponse>('/auth/register', data);
+    return extractApiData(res.data);
   },
-  login: async (data: any): Promise<{ role: string; name: string }> => {
-    const res = await api.post('/auth/login', data);
-    return res.data;
+  login: async (data: UnknownRecord): Promise<AuthResponse> => {
+    const res = await api.post<ApiResponse<AuthResponse> | AuthResponse>('/auth/login', data);
+    return extractApiData(res.data);
   },
   logout: async (): Promise<void> => {
     await api.post('/auth/logout');
   },
-  devBypass: async (): Promise<{ role: string; name: string }> => {
-    const res = await api.post('/auth/dev-bypass');
-    return res.data;
+  devBypass: async (): Promise<AuthResponse> => {
+    const res = await api.post<ApiResponse<AuthResponse> | AuthResponse>('/auth/dev-bypass');
+    return extractApiData(res.data);
   },
   switchRole: async (role: 'customer' | 'seller'): Promise<{ role: string }> => {
-    const res = await api.patch('/users/me/role', { role });
-    return res.data;
+    const res = await api.patch<ApiResponse<{ role: string }> | { role: string }>(
+      '/users/me/role',
+      { role }
+    );
+    return extractApiData(res.data);
   },
 };
 
@@ -163,8 +229,8 @@ export const productService = {
   list: async (
     category?: string,
     featured?: boolean,
-    page: number = 1,
-    limit: number = 20,
+    page = 1,
+    limit = 20,
     minPrice?: number,
     maxPrice?: number,
     minRating?: number,
@@ -179,7 +245,15 @@ export const productService = {
     limit: number;
     pages: number;
   }> => {
-    const res = await api.get('/products', {
+    const res = await api.get<
+      ApiResponse<{
+        items: Product[];
+        total: number;
+        page: number;
+        limit: number;
+        pages: number;
+      }>
+    >('/products', {
       params: {
         category,
         featured,
@@ -194,14 +268,14 @@ export const productService = {
         sort_dir: sortDir,
       },
     });
-    return res.data;
+    return extractApiData(res.data);
   },
   listSeller: async (
     category?: string,
     isActive?: boolean,
     stockLevel?: string,
-    page: number = 1,
-    limit: number = 20
+    page = 1,
+    limit = 20
   ): Promise<{
     items: Product[];
     total: number;
@@ -209,7 +283,15 @@ export const productService = {
     limit: number;
     pages: number;
   }> => {
-    const res = await api.get('/products/seller', {
+    const res = await api.get<
+      ApiResponse<{
+        items: Product[];
+        total: number;
+        page: number;
+        limit: number;
+        pages: number;
+      }>
+    >('/products/seller', {
       params: {
         category,
         is_active: isActive,
@@ -218,19 +300,21 @@ export const productService = {
         limit,
       },
     });
-    return res.data;
+    return extractApiData(res.data);
   },
   get: async (id: string): Promise<Product> => {
-    const res = await api.get(`/products/${id}`);
-    return res.data;
+    const res = await api.get<ApiResponse<Product>>(`/products/${id}`);
+    return extractApiData(res.data);
   },
-  create: async (data: Omit<Product, 'id' | 'seller_id' | 'avg_rating' | 'sold_count' | 'is_active'>): Promise<Product> => {
-    const res = await api.post('/products', data);
-    return res.data;
+  create: async (
+    data: Omit<Product, 'id' | 'seller_id' | 'avg_rating' | 'sold_count' | 'is_active'>
+  ): Promise<Product> => {
+    const res = await api.post<ApiResponse<Product>>('/products', data);
+    return extractApiData(res.data);
   },
   update: async (id: string, data: Partial<Product>): Promise<Product> => {
-    const res = await api.put(`/products/${id}`, data);
-    return res.data;
+    const res = await api.put<ApiResponse<Product>>(`/products/${id}`, data);
+    return extractApiData(res.data);
   },
   delete: async (id: string): Promise<void> => {
     await api.delete(`/products/${id}`);
@@ -239,16 +323,16 @@ export const productService = {
 
 export const cartService = {
   get: async (): Promise<CartItem[]> => {
-    const res = await api.get('/cart');
-    return res.data;
+    const res = await api.get<ApiResponse<CartItem[]>>('/cart');
+    return extractApiData(res.data);
   },
-  add: async (productId: string, quantity: number = 1): Promise<CartItem> => {
-    const res = await api.post('/cart', { product_id: productId, quantity });
-    return res.data;
+  add: async (productId: string, quantity = 1): Promise<CartItem> => {
+    const res = await api.post<ApiResponse<CartItem>>('/cart', { product_id: productId, quantity });
+    return extractApiData(res.data);
   },
   update: async (productId: string, quantity: number): Promise<CartItem> => {
-    const res = await api.put(`/cart/${productId}`, { quantity });
-    return res.data;
+    const res = await api.put<ApiResponse<CartItem>>(`/cart/${productId}`, { quantity });
+    return extractApiData(res.data);
   },
   remove: async (productId: string): Promise<void> => {
     await api.delete(`/cart/${productId}`);
@@ -256,44 +340,66 @@ export const cartService = {
 };
 
 export const orderService = {
-  place: async (address: Record<string, any>): Promise<Order> => {
-    const res = await api.post('/orders', { delivery_address: address });
-    return res.data;
+  place: async (address: UnknownRecord): Promise<Order> => {
+    const res = await api.post<ApiResponse<Order>>('/orders', { delivery_address: address });
+    return extractApiData(res.data);
   },
-  list: async (page: number = 1, limit: number = 10): Promise<{
+  list: async (
+    page = 1,
+    limit = 10
+  ): Promise<{
     items: Order[];
     total: number;
     page: number;
     limit: number;
     pages: number;
   }> => {
-    const res = await api.get('/orders', { params: { page, limit } });
-    return res.data;
+    const res = await api.get<
+      ApiResponse<{
+        items: Order[];
+        total: number;
+        page: number;
+        limit: number;
+        pages: number;
+      }>
+    >('/orders', { params: { page, limit } });
+    return extractApiData(res.data);
   },
   get: async (id: string): Promise<Order> => {
-    const res = await api.get(`/orders/${id}`);
-    return res.data;
+    const res = await api.get<ApiResponse<Order>>(`/orders/${id}`);
+    return extractApiData(res.data);
   },
-  listSellerQueue: async (page: number = 1, limit: number = 10): Promise<{
+  listSellerQueue: async (
+    page = 1,
+    limit = 10
+  ): Promise<{
     items: Order[];
     total: number;
     page: number;
     limit: number;
     pages: number;
   }> => {
-    const res = await api.get('/orders/seller/queue', { params: { page, limit } });
-    return res.data;
+    const res = await api.get<
+      ApiResponse<{
+        items: Order[];
+        total: number;
+        page: number;
+        limit: number;
+        pages: number;
+      }>
+    >('/orders/seller/queue', { params: { page, limit } });
+    return extractApiData(res.data);
   },
   updateStatus: async (id: string, status: string): Promise<Order> => {
-    const res = await api.put(`/orders/${id}/status`, { status });
-    return res.data;
+    const res = await api.put<ApiResponse<Order>>(`/orders/${id}/status`, { status });
+    return extractApiData(res.data);
   },
 };
 
 export const memoryService = {
   listFacts: async (): Promise<PersistentFact[]> => {
-    const res = await api.get('/users/facts');
-    return res.data;
+    const res = await api.get<ApiResponse<PersistentFact[]>>('/users/facts');
+    return extractApiData(res.data);
   },
   deleteFact: async (factId: string): Promise<void> => {
     await api.delete(`/users/facts/${factId}`);
@@ -302,26 +408,31 @@ export const memoryService = {
 
 export const addressService = {
   list: async (): Promise<Address[]> => {
-    const res = await api.get('/addresses');
-    return res.data;
+    const res = await api.get<ApiResponse<Address[]>>('/addresses');
+    return extractApiData(res.data);
   },
-  create: async (data: Omit<Address, 'id' | 'user_id' | 'is_default'> & { is_default?: boolean }): Promise<Address> => {
-    const res = await api.post('/addresses', data);
-    return res.data;
+  create: async (
+    data: Omit<Address, 'id' | 'user_id' | 'is_default'> & { is_default?: boolean }
+  ): Promise<Address> => {
+    const res = await api.post<ApiResponse<Address>>('/addresses', data);
+    return extractApiData(res.data);
   },
   update: async (id: string, data: Partial<Address>): Promise<Address> => {
-    const res = await api.put(`/addresses/${id}`, data);
-    return res.data;
+    const res = await api.put<ApiResponse<Address>>(`/addresses/${id}`, data);
+    return extractApiData(res.data);
   },
   delete: async (id: string): Promise<void> => {
     await api.delete(`/addresses/${id}`);
   },
 };
 
-
 export const healthService = {
-  checkApiHealth: async (): Promise<{ voice_ok: boolean; status: string;[key: string]: any }> => {
-    const res = await api.get('/health');
-    return res.data;
+  checkApiHealth: async (): Promise<HealthStatus> => {
+    const res = await api.get<ApiResponse<HealthStatus> | HealthStatus>('/health');
+    const payload = res.data;
+    if (isWrappedHealthStatus(payload)) {
+      return payload.data;
+    }
+    return payload;
   },
 };

@@ -1,12 +1,16 @@
 import { Plus, Trash2, PenLine, Eye, EyeOff, Filter, X, Box } from 'lucide-react';
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 
 import { CustomDialog } from '../components/CustomDialog';
 import { DataTable, Column } from '../components/DataTable';
-import { SellerNav } from '../components/SellerNav';
 import { productService, Product, api } from '../services/api';
 
 export const InventoryManagement: React.FC = () => {
+  if (import.meta.env.DEV) {
+    // eslint-disable-next-line no-console
+    console.log('[Dev Render] InventoryManagement Page');
+  }
+
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -40,6 +44,11 @@ export const InventoryManagement: React.FC = () => {
 
   // Reference for dirty checking
   const originalProductRef = useRef<Product | null>(null);
+  const pageRef = useRef(page);
+
+  useEffect(() => {
+    pageRef.current = page;
+  }, [page]);
 
   const categories = ['Dairy & Eggs', 'Produce', 'Pantry', 'Bakery', 'Beverages'];
 
@@ -54,7 +63,12 @@ export const InventoryManagement: React.FC = () => {
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string>('');
 
-  const showDialog = (title: string, message: string, isConfirm = false, onConfirm?: () => void) => {
+  const showDialog = (
+    title: string,
+    message: string,
+    isConfirm = false,
+    onConfirm?: () => void
+  ) => {
     setDialogTitle(title);
     setDialogMessage(message);
     setDialogConfirm(isConfirm);
@@ -83,12 +97,12 @@ export const InventoryManagement: React.FC = () => {
 
     setUploadingImage(true);
     try {
-      const res = await api.post('/products/upload', formData, {
+      const res = await api.post<{ url?: unknown }>('/products/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
-      setUploadedImageUrl(res.data.url);
+      setUploadedImageUrl(typeof res.data.url === 'string' ? res.data.url : '');
     } catch (err) {
       console.error(err);
       showDialog('Error', 'Failed to upload image file.');
@@ -97,33 +111,35 @@ export const InventoryManagement: React.FC = () => {
     }
   };
 
-  const fetchProducts = async (pageNum: number = page) => {
-    setLoading(true);
-    try {
-      const cat = filterCategory === 'All' ? undefined : filterCategory;
-      const act = filterStatus === 'All' ? undefined : (filterStatus === 'Active');
-      const st = filterStock === 'All' ? undefined : (filterStock === 'Low' ? 'low' : 'out');
+  const fetchProducts = useCallback(
+    async (pageNum: number = pageRef.current) => {
+      setLoading(true);
+      try {
+        const cat = filterCategory === 'All' ? undefined : filterCategory;
+        const act = filterStatus === 'All' ? undefined : filterStatus === 'Active';
+        const st = filterStock === 'All' ? undefined : filterStock === 'Low' ? 'low' : 'out';
 
-      const data = await productService.listSeller(cat, act, st, pageNum, 10);
-      setProducts(data.items);
-      setTotalPages(data.pages);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+        const data = await productService.listSeller(cat, act, st, pageNum, 10);
+        setProducts(data.items);
+        setTotalPages(data.pages);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [filterCategory, filterStatus, filterStock]
+  );
+
+  // Fetch when page or filters change (since fetchProducts identity changes on filters)
+  useEffect(() => {
+    void fetchProducts(page);
+  }, [fetchProducts, page]);
 
   // Reset page to 1 when filters change to fix second page pagination bug
   useEffect(() => {
     setPage(1);
-    fetchProducts(1);
   }, [filterCategory, filterStatus, filterStock]);
-
-  // Fetch only when page changes
-  useEffect(() => {
-    fetchProducts(page);
-  }, [page]);
 
   const handleAddProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -147,7 +163,7 @@ export const InventoryManagement: React.FC = () => {
         stock: '',
       });
       setUploadedImageUrl('');
-      fetchProducts();
+      void fetchProducts();
     } catch (err) {
       console.error(err);
       showDialog('Error', 'Failed to add product.');
@@ -159,18 +175,18 @@ export const InventoryManagement: React.FC = () => {
     setEditingProductId(product.id);
     setEditForm({
       name: product.name,
-      description: product.description || '',
+      description: product.description ?? '',
       category: product.category,
       price: product.price.toString(),
       stock: product.stock.toString(),
       is_active: product.is_active,
     });
-    setUploadedImageUrl(product.image_url || '');
+    setUploadedImageUrl(product.image_url ?? '');
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingProductId) return;
+    if (editingProductId === null) return;
 
     try {
       await productService.update(editingProductId, {
@@ -185,7 +201,7 @@ export const InventoryManagement: React.FC = () => {
 
       showDialog('Success', 'Product successfully updated.');
       setEditingProductId(null);
-      fetchProducts();
+      void fetchProducts();
     } catch (err) {
       console.error(err);
       showDialog('Error', 'Failed to update product.');
@@ -193,16 +209,16 @@ export const InventoryManagement: React.FC = () => {
   };
 
   const isFormDirty = () => {
-    if (!originalProductRef.current) return false;
+    if (originalProductRef.current === null) return false;
     const orig = originalProductRef.current;
     return (
       editForm.name !== orig.name ||
-      editForm.description !== (orig.description || '') ||
+      editForm.description !== (orig.description ?? '') ||
       editForm.category !== orig.category ||
       parseFloat(editForm.price) !== orig.price ||
       parseInt(editForm.stock) !== orig.stock ||
       editForm.is_active !== orig.is_active ||
-      uploadedImageUrl !== (orig.image_url || '')
+      uploadedImageUrl !== (orig.image_url ?? '')
     );
   };
 
@@ -215,7 +231,7 @@ export const InventoryManagement: React.FC = () => {
         try {
           await productService.delete(productId);
           showDialog('Success', 'Product successfully deactivated.');
-          fetchProducts();
+          void fetchProducts();
         } catch (err) {
           console.error(err);
           showDialog('Error', 'Failed to deactivate product.');
@@ -239,15 +255,24 @@ export const InventoryManagement: React.FC = () => {
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-gray-50 dark:bg-gray-900/40 rounded-lg p-1 flex items-center justify-center flex-shrink-0">
             <img
-              src={val || 'https://via.placeholder.com/80'}
+              src={
+                typeof val === 'string' && val.trim().length > 0
+                  ? val
+                  : 'https://via.placeholder.com/80'
+              }
               alt={item.name}
               className="h-full object-contain rounded"
             />
           </div>
           <div>
             <p className="font-bold text-xs text-gray-800 dark:text-gray-200">{item.name}</p>
-            <p className="text-[10px] text-gray-400 truncate max-w-[200px]" title={item.description || ''}>
-              {item.description || 'No description'}
+            <p
+              className="text-[10px] text-gray-400 truncate max-w-[200px]"
+              title={typeof item.description === 'string' ? item.description : ''}
+            >
+              {typeof item.description === 'string' && item.description.trim().length > 0
+                ? item.description
+                : 'No description'}
             </p>
           </div>
         </div>
@@ -260,13 +285,19 @@ export const InventoryManagement: React.FC = () => {
       filterable: true,
       filterType: 'select',
       filterOptions: categories,
-      render: (val) => <span className="font-medium text-gray-600 dark:text-gray-400">{String(val)}</span>,
+      render: (val) => (
+        <span className="font-medium text-gray-600 dark:text-gray-400">{String(val)}</span>
+      ),
     },
     {
       key: 'price',
       header: 'Price',
       sortable: true,
-      render: (val) => <span className="font-bold text-gray-700 dark:text-gray-300">€{Number(val).toFixed(2)}</span>,
+      render: (val) => (
+        <span className="font-bold text-gray-700 dark:text-gray-300">
+          €{Number(val).toFixed(2)}
+        </span>
+      ),
     },
     {
       key: 'stock',
@@ -274,11 +305,12 @@ export const InventoryManagement: React.FC = () => {
       sortable: true,
       render: (val) => {
         const qty = Number(val);
-        const lowStockClass = qty === 0
-          ? 'bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/20 dark:text-red-400'
-          : qty < 10
-            ? 'bg-amber-50 text-amber-600 border border-amber-200 dark:bg-amber-950/20 dark:text-amber-400'
-            : 'text-gray-700 dark:text-gray-300';
+        const lowStockClass =
+          qty === 0
+            ? 'bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/20 dark:text-red-400'
+            : qty < 10
+              ? 'bg-amber-50 text-amber-600 border border-amber-200 dark:bg-amber-950/20 dark:text-amber-400'
+              : 'text-gray-700 dark:text-gray-300';
         return (
           <span className={`px-2.5 py-0.5 rounded font-semibold text-xs ${lowStockClass}`}>
             {qty}
@@ -300,7 +332,9 @@ export const InventoryManagement: React.FC = () => {
       filterType: 'select',
       filterOptions: ['Active', 'Inactive'],
       render: (_, item) => (
-        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${getStatusColor(item.is_active)}`}>
+        <span
+          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${getStatusColor(item.is_active)}`}
+        >
           {item.is_active ? <Eye size={10} /> : <EyeOff size={10} />}
           <span>{item.is_active ? 'Active' : 'Inactive'}</span>
         </span>
@@ -334,15 +368,16 @@ export const InventoryManagement: React.FC = () => {
 
   return (
     <div className="w-full min-h-screen bg-gray-50/50 dark:bg-gray-950 text-left">
-      <SellerNav />
       <div className="max-w-6xl mx-auto py-8 px-4 space-y-6">
         <div className="flex justify-between items-center gap-4">
           <div>
             <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">Inventory</h1>
-            <p className="text-sm text-gray-500">Manage catalog products, pricing, stock levels, and upload images</p>
+            <p className="text-sm text-gray-500">
+              Manage catalog products, pricing, stock levels, and upload images
+            </p>
           </div>
           <button
-            onClick={() => setShowAddForm(!showAddForm)}
+            onClick={() => setShowAddForm((prev) => !prev)}
             className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-xs transition shadow-md shadow-purple-500/20"
           >
             <Plus size={14} />
@@ -352,13 +387,20 @@ export const InventoryManagement: React.FC = () => {
 
         {/* Add Product Form */}
         {showAddForm && (
-          <form onSubmit={handleAddProductSubmit} className="p-6 border dark:border-gray-900 rounded-2xl bg-white dark:bg-gray-900 grid grid-cols-1 md:grid-cols-3 gap-4 shadow-md">
+          <form
+            onSubmit={handleAddProductSubmit}
+            className="p-6 border dark:border-gray-900 rounded-2xl bg-white dark:bg-gray-900 grid grid-cols-1 md:grid-cols-3 gap-4 shadow-md"
+          >
             <div className="md:col-span-3 flex justify-between items-center border-b pb-2 dark:border-gray-800">
               <h4 className="text-xs font-bold uppercase text-purple-600 flex items-center gap-2">
                 <Box size={14} />
                 <span>New Product Form</span>
               </h4>
-              <button type="button" onClick={() => setShowAddForm(false)} className="text-gray-400 hover:text-gray-600">
+              <button
+                type="button"
+                onClick={() => setShowAddForm(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
                 <X size={16} />
               </button>
             </div>
@@ -408,7 +450,9 @@ export const InventoryManagement: React.FC = () => {
                 className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
               >
                 {categories.map((c) => (
-                  <option key={c} value={c}>{c}</option>
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
                 ))}
               </select>
             </div>
@@ -424,7 +468,9 @@ export const InventoryManagement: React.FC = () => {
             </div>
 
             <div className="md:col-span-3 space-y-1">
-              <label className="text-[10px] font-bold text-gray-400 uppercase font-medium">Product Image File (Max 5MB)</label>
+              <label className="text-[10px] font-bold text-gray-400 uppercase font-medium">
+                Product Image File (Max 5MB)
+              </label>
               <input
                 type="file"
                 accept="image/*"
@@ -432,7 +478,11 @@ export const InventoryManagement: React.FC = () => {
                 className="w-full text-xs text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-purple-50 file:text-purple-700 dark:file:bg-purple-900/20 dark:file:text-purple-300 hover:file:bg-purple-100 cursor-pointer"
               />
               {uploadingImage && <p className="text-[10px] text-gray-400">Uploading...</p>}
-              {uploadedImageUrl && <p className="text-[10px] text-green-600 truncate font-semibold">Uploaded: {uploadedImageUrl}</p>}
+              {uploadedImageUrl && (
+                <p className="text-[10px] text-green-600 truncate font-semibold">
+                  Uploaded: {uploadedImageUrl}
+                </p>
+              )}
             </div>
 
             <div className="md:col-span-3 flex justify-end">
@@ -463,7 +513,9 @@ export const InventoryManagement: React.FC = () => {
             >
               <option value="All">All Categories</option>
               {categories.map((c) => (
-                <option key={c} value={c}>{c}</option>
+                <option key={c} value={c}>
+                  {c}
+                </option>
               ))}
             </select>
           </div>
@@ -516,7 +568,7 @@ export const InventoryManagement: React.FC = () => {
               Page {page} of {totalPages}
             </span>
             <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
               disabled={page === totalPages}
               className="px-4 py-2 text-xs font-bold rounded-lg border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-900 disabled:opacity-40 transition"
             >
@@ -527,24 +579,38 @@ export const InventoryManagement: React.FC = () => {
       </div>
 
       {/* Edit Product Slide-over panel */}
-      {editingProductId && (
+      {editingProductId !== null && (
         <div className="fixed inset-0 overflow-hidden z-50">
           <div className="absolute inset-0 overflow-hidden">
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={() => setEditingProductId(null)} />
+            <div
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity"
+              onClick={() => setEditingProductId(null)}
+            />
             <div className="pointer-events-none fixed inset-y-0 right-0 flex max-w-full pl-10">
               <div className="pointer-events-auto w-screen max-w-md">
-                <form onSubmit={handleSaveEdit} className="flex h-full flex-col bg-white dark:bg-gray-950 shadow-xl border-l dark:border-gray-900 text-left">
+                <form
+                  onSubmit={handleSaveEdit}
+                  className="flex h-full flex-col bg-white dark:bg-gray-950 shadow-xl border-l dark:border-gray-900 text-left"
+                >
                   <div className="flex-1 overflow-y-auto py-6 px-4 sm:px-6">
                     <div className="flex items-start justify-between">
-                      <h2 className="text-lg font-black text-gray-900 dark:text-gray-100 uppercase tracking-tight">Edit Catalog Product</h2>
-                      <button type="button" className="rounded-md text-gray-400 hover:text-gray-500" onClick={() => setEditingProductId(null)}>
+                      <h2 className="text-lg font-black text-gray-900 dark:text-gray-100 uppercase tracking-tight">
+                        Edit Catalog Product
+                      </h2>
+                      <button
+                        type="button"
+                        className="rounded-md text-gray-400 hover:text-gray-500"
+                        onClick={() => setEditingProductId(null)}
+                      >
                         <X size={20} />
                       </button>
                     </div>
 
                     <div className="mt-8 space-y-6">
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-400 uppercase">Product Name</label>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">
+                          Product Name
+                        </label>
                         <input
                           type="text"
                           required
@@ -555,18 +621,24 @@ export const InventoryManagement: React.FC = () => {
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-400 uppercase">Description</label>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">
+                          Description
+                        </label>
                         <textarea
                           rows={3}
                           value={editForm.description}
-                          onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                          onChange={(e) =>
+                            setEditForm({ ...editForm, description: e.target.value })
+                          }
                           className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600 resize-none"
                         />
                       </div>
 
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Price (€)</label>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">
+                            Price (€)
+                          </label>
                           <input
                             type="number"
                             step="0.01"
@@ -577,7 +649,9 @@ export const InventoryManagement: React.FC = () => {
                           />
                         </div>
                         <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Stock Quantity</label>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">
+                            Stock Quantity
+                          </label>
                           <input
                             type="number"
                             required
@@ -589,39 +663,55 @@ export const InventoryManagement: React.FC = () => {
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-400 uppercase">Category</label>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">
+                          Category
+                        </label>
                         <select
                           value={editForm.category}
                           onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
                           className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
                         >
                           {categories.map((c) => (
-                            <option key={c} value={c}>{c}</option>
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
                           ))}
                         </select>
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-400 uppercase">Product Image File (Max 5MB)</label>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">
+                          Product Image File (Max 5MB)
+                        </label>
                         <input
                           type="file"
                           accept="image/*"
                           onChange={handleImageFileChange}
                           className="w-full text-xs text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-purple-50 file:text-purple-700 dark:file:bg-purple-900/20 dark:file:text-purple-300 hover:file:bg-purple-100 cursor-pointer"
                         />
-                        {uploadingImage && <p className="text-[10px] text-gray-400">Uploading...</p>}
-                        {uploadedImageUrl && <p className="text-[10px] text-green-600 truncate font-semibold">Uploaded: {uploadedImageUrl}</p>}
+                        {uploadingImage && (
+                          <p className="text-[10px] text-gray-400">Uploading...</p>
+                        )}
+                        {uploadedImageUrl && (
+                          <p className="text-[10px] text-green-600 truncate font-semibold">
+                            Uploaded: {uploadedImageUrl}
+                          </p>
+                        )}
                       </div>
 
                       <div className="flex items-center justify-between border-t dark:border-gray-900 pt-4">
                         <div>
-                          <label className="text-xs font-bold text-gray-800 dark:text-gray-200">Active Status</label>
+                          <label className="text-xs font-bold text-gray-800 dark:text-gray-200">
+                            Active Status
+                          </label>
                           <p className="text-[10px] text-gray-400">Visible to customer catalog</p>
                         </div>
                         <input
                           type="checkbox"
                           checked={editForm.is_active}
-                          onChange={(e) => setEditForm({ ...editForm, is_active: e.target.checked })}
+                          onChange={(e) =>
+                            setEditForm({ ...editForm, is_active: e.target.checked })
+                          }
                           className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 dark:bg-gray-900 border-gray-300"
                         />
                       </div>
@@ -652,14 +742,17 @@ export const InventoryManagement: React.FC = () => {
       )}
 
       <CustomDialog
-        {...({
+        {...{
           isOpen: dialogOpen,
           title: dialogTitle,
           message: dialogMessage,
           isConfirm: dialogConfirm,
-          onConfirm: onConfirmCallback,
-          onClose: () => { setDialogOpen(false); setDialogConfirm(false); }
-        } as any)}
+          onConfirm: onConfirmCallback ?? (() => setDialogConfirm(false)),
+          onClose: () => {
+            setDialogOpen(false);
+            setDialogConfirm(false);
+          },
+        }}
       />
     </div>
   );

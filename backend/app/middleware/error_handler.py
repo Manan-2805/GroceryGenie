@@ -58,12 +58,13 @@ async def log_and_create_error_response(
             if hasattr(request.state, "user") and request.state.user:
                 try:
                     from sqlalchemy.orm import attributes
+
                     state = attributes.instance_state(request.state.user)
                     uid = state.dict.get("id")
                     if uid:
                         user_id = str(uid)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error {request_id} while retrieving user ID: {e}")
 
             app_error = AppError(
                 user_id=user_id,
@@ -81,7 +82,9 @@ async def log_and_create_error_response(
     return JSONResponse(
         status_code=status_code,
         content={
-            "detail": f"{detail} (Reference ID: {request_id})" if status_code >= 500 else detail,
+            "detail": f"{detail} (Reference ID: {request_id})"
+            if status_code >= 500
+            else detail,
             "request_id": str(request_id),
             "exception": str(exc),
             "traceback": tb,

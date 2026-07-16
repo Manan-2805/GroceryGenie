@@ -1,8 +1,14 @@
-import { ShoppingBag, Box, DollarSign, AlertTriangle, ArrowRight, CheckCircle2 } from 'lucide-react';
+import {
+  ShoppingBag,
+  Box,
+  DollarSign,
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
+} from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { SellerNav } from '../components/SellerNav';
 import { orderService, productService, Product, Order } from '../services/api';
 
 export const SellerDashboard: React.FC = () => {
@@ -23,7 +29,13 @@ export const SellerDashboard: React.FC = () => {
       setLowStockProducts(lowStockData.items);
 
       // 3. Fetch total products to show catalog count
-      const allSellerProducts = await productService.listSeller(undefined, undefined, undefined, 1, 100);
+      const allSellerProducts = await productService.listSeller(
+        undefined,
+        undefined,
+        undefined,
+        1,
+        100
+      );
       setTotalProductsCount(allSellerProducts.total);
     } catch (e) {
       console.error('Error fetching dashboard data:', e);
@@ -46,52 +58,71 @@ export const SellerDashboard: React.FC = () => {
 
   return (
     <div className="w-full min-h-screen bg-gray-50/50 dark:bg-gray-950 text-left">
-      <SellerNav />
       <div className="max-w-6xl mx-auto py-8 px-4 space-y-8">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">Seller Dashboard</h1>
-          <p className="text-sm text-gray-500">Monitor order fulfillment, catalog stock alerts, and revenue summaries</p>
+          <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">
+            Seller Dashboard
+          </h1>
+          <p className="text-sm text-gray-500">
+            Monitor order fulfillment, catalog stock alerts, and revenue summaries
+          </p>
         </div>
 
         {/* KPI Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
           <div className="p-6 border rounded-2xl bg-white dark:bg-gray-900 shadow-sm relative overflow-hidden group hover:shadow-md transition">
             <div className="flex justify-between items-start">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Gross Sales</span>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                Gross Sales
+              </span>
               <span className="p-2 bg-purple-50 dark:bg-purple-950/20 text-purple-600 rounded-xl">
                 <DollarSign size={18} />
               </span>
             </div>
             <div className="mt-4">
-              <p className="text-2xl font-black text-gray-800 dark:text-gray-200">€{totalSales.toFixed(2)}</p>
-              <p className="text-[10px] text-gray-400 mt-1 font-semibold">From completed delivered orders</p>
+              <p className="text-2xl font-black text-gray-800 dark:text-gray-200">
+                €{totalSales.toFixed(2)}
+              </p>
+              <p className="text-[10px] text-gray-400 mt-1 font-semibold">
+                From completed delivered orders
+              </p>
             </div>
           </div>
 
           <div className="p-6 border rounded-2xl bg-white dark:bg-gray-900 shadow-sm relative overflow-hidden group hover:shadow-md transition">
             <div className="flex justify-between items-start">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Active Fulfillment</span>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                Active Fulfillment
+              </span>
               <span className="p-2 bg-amber-50 dark:bg-amber-950/20 text-amber-500 rounded-xl">
                 <ShoppingBag size={18} />
               </span>
             </div>
             <div className="mt-4">
               <p className="text-2xl font-black text-amber-500">{activeOrdersCount} Pending</p>
-              <p className="text-[10px] text-gray-400 mt-1 font-semibold">Orders awaiting delivery status updates</p>
+              <p className="text-[10px] text-gray-400 mt-1 font-semibold">
+                Orders awaiting delivery status updates
+              </p>
             </div>
           </div>
 
           <div className="p-6 border rounded-2xl bg-white dark:bg-gray-900 shadow-sm relative overflow-hidden group hover:shadow-md transition">
             <div className="flex justify-between items-start">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">My Catalog</span>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                My Catalog
+              </span>
               <span className="p-2 bg-purple-50 dark:bg-purple-950/20 text-purple-600 rounded-xl">
                 <Box size={18} />
               </span>
             </div>
             <div className="mt-4">
-              <p className="text-2xl font-black text-gray-800 dark:text-gray-200">{totalProductsCount} Products</p>
-              <p className="text-[10px] text-gray-400 mt-1 font-semibold">Active items in the customer store</p>
+              <p className="text-2xl font-black text-gray-800 dark:text-gray-200">
+                {totalProductsCount} Products
+              </p>
+              <p className="text-[10px] text-gray-400 mt-1 font-semibold">
+                Active items in the customer store
+              </p>
             </div>
           </div>
         </div>
@@ -115,11 +146,16 @@ export const SellerDashboard: React.FC = () => {
             </div>
 
             {orders.length === 0 ? (
-              <p className="text-xs text-gray-400 text-center py-8">No orders awaiting fulfillment.</p>
+              <p className="text-xs text-gray-400 text-center py-8">
+                No orders awaiting fulfillment.
+              </p>
             ) : (
               <div className="divide-y divide-gray-100 dark:divide-gray-800">
                 {orders.map((order) => (
-                  <div key={order.id} className="py-3 flex justify-between items-center gap-4 text-xs">
+                  <div
+                    key={order.id}
+                    className="py-3 flex justify-between items-center gap-4 text-xs"
+                  >
                     <div>
                       <p className="font-bold text-gray-800 dark:text-gray-200">
                         Order #{order.id.slice(0, 8)}
@@ -129,7 +165,9 @@ export const SellerDashboard: React.FC = () => {
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="font-black text-gray-800 dark:text-gray-200">€{order.total.toFixed(2)}</p>
+                      <p className="font-black text-gray-800 dark:text-gray-200">
+                        €{order.total.toFixed(2)}
+                      </p>
                       <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-amber-50 text-amber-600 dark:bg-amber-950/20 dark:text-amber-400 uppercase mt-1 inline-block">
                         {order.status.replace(/_/g, ' ')}
                       </span>
@@ -160,7 +198,9 @@ export const SellerDashboard: React.FC = () => {
               <div className="flex flex-col items-center justify-center py-8 text-center gap-1 text-xs">
                 <CheckCircle2 size={24} className="text-green-500" />
                 <p className="font-bold text-gray-800 dark:text-gray-200">Inventory Healthy</p>
-                <p className="text-[10px] text-gray-400">All products have sufficient stock levels</p>
+                <p className="text-[10px] text-gray-400">
+                  All products have sufficient stock levels
+                </p>
               </div>
             ) : (
               <div className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -169,7 +209,11 @@ export const SellerDashboard: React.FC = () => {
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 bg-gray-50 dark:bg-gray-900/40 rounded p-1 flex items-center justify-center flex-shrink-0">
                         <img
-                          src={p.image_url || 'https://via.placeholder.com/80'}
+                          src={
+                            typeof p.image_url === 'string' && p.image_url.trim().length > 0
+                              ? p.image_url
+                              : 'https://via.placeholder.com/80'
+                          }
                           alt={p.name}
                           className="h-full object-contain rounded"
                         />
@@ -180,7 +224,9 @@ export const SellerDashboard: React.FC = () => {
                       </div>
                     </div>
                     <div className="text-right">
-                      <span className={`px-2 py-0.5 rounded font-black text-xs ${p.stock === 0 ? 'bg-red-50 text-red-600 dark:bg-red-950/20' : 'bg-amber-50 text-amber-600 dark:bg-amber-950/20'}`}>
+                      <span
+                        className={`px-2 py-0.5 rounded font-black text-xs ${p.stock === 0 ? 'bg-red-50 text-red-600 dark:bg-red-950/20' : 'bg-amber-50 text-amber-600 dark:bg-amber-950/20'}`}
+                      >
                         {p.stock === 0 ? 'OUT' : `${p.stock} left`}
                       </span>
                     </div>

@@ -12,7 +12,7 @@ type UIState = {
   setVoiceOk: (ok: boolean) => void;
   setBackendUnreachable: (unreachable: boolean) => void;
   setAppError: (error: string | null) => void;
-}
+};
 
 export const useUIStore = create<UIState>((set) => ({
   theme: (localStorage.getItem('theme') as 'light' | 'dark') || 'light',

@@ -1,18 +1,31 @@
 import React, { useState } from 'react';
+
 import { authService } from '../services/api';
 
 type LoginProps = {
   onLoginSuccess?: () => void;
-}
+};
+
+type ErrorPayload = {
+  response?: {
+    data?: {
+      detail?: unknown;
+    };
+  };
+};
+
+const getErrorMessage = (error: unknown): string => {
+  const payload = error as ErrorPayload;
+  const detail = payload.response?.data?.detail;
+  return typeof detail === 'string' ? detail : 'Dev bypass failed.';
+};
 
 export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const handleGoogleLogin = () => {
-    const loginUrl = import.meta.env.DEV
-      ? 'http://localhost:8000/api/v1/auth/google/login'
-      : '/api/v1/auth/google/login';
+    const loginUrl = '/api/v1/auth/google/login';
     window.location.href = loginUrl;
   };
 
@@ -26,18 +39,17 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
       } else {
         window.location.reload();
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setError(err.response?.data?.detail || 'Dev bypass failed.');
+      setError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="flex-1 flex flex-col justify-center items-center py-20 px-4 bg-gradient-to-br from-indigo-50/20 via-purple-50/10 to-pink-50/20 dark:from-gray-950 dark:via-purple-950/10 dark:to-gray-900">
+    <div className="h-full flex-1 flex flex-col justify-center items-center py-20 px-4 bg-gradient-to-br from-indigo-50/20 via-purple-50/10 to-pink-50/20 dark:from-gray-950 dark:via-purple-950/10 dark:to-gray-900">
       <div className="max-w-md w-full p-8 border border-white/20 dark:border-gray-800/40 rounded-3xl glassmorphism shadow-2xl text-center space-y-6 relative overflow-hidden backdrop-blur-xl bg-white/40 dark:bg-gray-950/40">
-
         {/* Subtle decorative background glows */}
         <div className="absolute -top-10 -left-10 w-32 h-32 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -51,7 +63,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
           </p>
         </div>
 
-        {error && (
+        {error !== null && error !== '' && (
           <div className="p-3 text-xs bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 rounded-xl border border-red-200 dark:border-red-900 text-left">
             {error}
           </div>
@@ -62,7 +74,10 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             onClick={handleGoogleLogin}
             className="group w-full py-3 px-5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 hover:border-purple-500 dark:hover:border-purple-400 hover:shadow-lg hover:shadow-purple-500/10 rounded-2xl text-xs font-bold text-gray-700 dark:text-gray-300 transition duration-300 flex justify-center items-center gap-3 active:scale-[0.98]"
           >
-            <svg className="w-4 h-4 group-hover:scale-110 transition duration-300" viewBox="0 0 24 24">
+            <svg
+              className="w-4 h-4 group-hover:scale-110 transition duration-300"
+              viewBox="0 0 24 24"
+            >
               <path
                 fill="#4285F4"
                 d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v3.92h6.58c-.28 1.48-1.11 2.74-2.36 3.59v2.98h3.8c2.22-2.05 3.5-5.07 3.5-8.42z"

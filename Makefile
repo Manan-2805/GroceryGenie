@@ -1,7 +1,7 @@
 SHELL := powershell.exe
 .SHELLFLAGS := -NoProfile -Command
 
-.PHONY: install setup lint format security test check migrate dev prod up down backend-logs frontend-logs setup-git-hooks
+.PHONY: install setup lint format security test test-e2e playwright-install check check-backend migrate dev prod up down backend-logs frontend-logs setup-git-hooks
 
 setup:
 	if (!(Test-Path .env.dev)) { Copy-Item .env.example .env.dev }
@@ -31,9 +31,22 @@ security:
 	cd backend; uv run pip-audit
 
 test:
-	cd backend; uv run python -m pytest -v
+	cd backend;$$env:RUN_E2E="1"; $$env:PLAYWRIGHT_HEADLESS="0"; $$env:PLAYWRIGHT_SLOW_MO="50"; uv run python -m pytest -v
 
-check: lint format security
+test-e2e:
+	cd backend; $$env:RUN_E2E="1"; $$env:PLAYWRIGHT_HEADLESS="0"; $$env:PLAYWRIGHT_SLOW_MO="50"; uv run python -m pytest -v -m e2e tests/test_e2e.py
+
+playwright-install:
+	cd backend; uv run python -m playwright install chromium
+
+check-backend:
+	cd backend; uv run ruff check app tests
+	cd backend; uv run mypy --strict --explicit-package-bases app
+	cd backend; uv run bandit -c pyproject.toml -r app
+	cd backend; uv run pip-audit
+	cd backend; uv run python -m pytest -v -m "not e2e"
+
+check: lint format security test
 	Write-Host "All pre-commit checks passed successfully on local machine!"
 
 migrate:

@@ -1,9 +1,8 @@
 import { Clock, MapPin, Eye, ArrowRight, CheckCircle2 } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
 import { CustomDialog } from '../components/CustomDialog';
 import { DataTable, Column } from '../components/DataTable';
-import { SellerNav } from '../components/SellerNav';
 import { orderService, Order } from '../services/api';
 
 export const FulfillmentQueue: React.FC = () => {
@@ -25,21 +24,24 @@ export const FulfillmentQueue: React.FC = () => {
     setDialogOpen(true);
   };
 
-  const fetchOrders = async (pageNum: number = page) => {
-    try {
-      const data = await orderService.listSellerQueue(pageNum, 10);
-      setOrders(data.items);
-      setTotalPages(data.pages);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const fetchOrders = useCallback(
+    async (pageNum: number = page) => {
+      try {
+        const data = await orderService.listSellerQueue(pageNum, 10);
+        setOrders(data.items);
+        setTotalPages(data.pages);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [page]
+  );
 
   useEffect(() => {
-    fetchOrders();
-  }, [page]);
+    void fetchOrders(page);
+  }, [fetchOrders, page]);
 
   const handleSelectOrder = async (orderId: string) => {
     setSelectedOrderId(orderId);
@@ -108,7 +110,9 @@ export const FulfillmentQueue: React.FC = () => {
       header: 'Order ID',
       sortable: true,
       filterable: true,
-      render: (val) => <span className="font-mono text-xs font-bold">{String(val).slice(0, 8)}...</span>,
+      render: (val) => (
+        <span className="font-mono text-xs font-bold">{String(val).slice(0, 8)}...</span>
+      ),
     },
     {
       key: 'created_at',
@@ -117,7 +121,7 @@ export const FulfillmentQueue: React.FC = () => {
       render: (val) => (
         <span className="flex items-center gap-1 text-xs">
           <Clock size={12} className="text-gray-400" />
-          {new Date(val).toLocaleString()}
+          {new Date(String(val)).toLocaleString()}
         </span>
       ),
     },
@@ -125,7 +129,11 @@ export const FulfillmentQueue: React.FC = () => {
       key: 'total',
       header: 'Total Value',
       sortable: true,
-      render: (val) => <span className="font-bold text-purple-600 dark:text-purple-400">€{Number(val).toFixed(2)}</span>,
+      render: (val) => (
+        <span className="font-bold text-purple-600 dark:text-purple-400">
+          €{Number(val).toFixed(2)}
+        </span>
+      ),
     },
     {
       key: 'status',
@@ -135,7 +143,9 @@ export const FulfillmentQueue: React.FC = () => {
       filterType: 'select',
       filterOptions: ['placed', 'packed', 'out_for_delivery', 'delivered'],
       render: (val) => (
-        <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase ${getStatusColor(val)}`}>
+        <span
+          className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase ${getStatusColor(String(val))}`}
+        >
           {String(val).replace(/_/g, ' ')}
         </span>
       ),
@@ -145,7 +155,9 @@ export const FulfillmentQueue: React.FC = () => {
       header: 'Action',
       render: (_, item) => (
         <button
-          onClick={() => handleSelectOrder(item.id)}
+          onClick={() => {
+            void handleSelectOrder(item.id);
+          }}
           className={`flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-bold transition ${
             selectedOrderId === item.id
               ? 'bg-purple-600 text-white'
@@ -164,15 +176,18 @@ export const FulfillmentQueue: React.FC = () => {
   }
 
   const selectedOrder = orders.find((o) => o.id === selectedOrderId);
-  const selectedDetails = selectedOrderId ? orderDetails[selectedOrderId] : null;
+  const selectedDetails = selectedOrderId !== null ? (orderDetails[selectedOrderId] ?? null) : null;
 
   return (
     <div className="w-full min-h-screen bg-gray-50/50 dark:bg-gray-950 text-left">
-      <SellerNav />
       <div className="max-w-6xl mx-auto py-8 px-4 space-y-6">
         <div>
-          <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">Fulfillment Queue</h1>
-          <p className="text-sm text-gray-500">Manage orders, update packing statuses, and coordinate deliveries</p>
+          <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">
+            Fulfillment Queue
+          </h1>
+          <p className="text-sm text-gray-500">
+            Manage orders, update packing statuses, and coordinate deliveries
+          </p>
         </div>
 
         <DataTable
@@ -205,12 +220,15 @@ export const FulfillmentQueue: React.FC = () => {
         )}
 
         {/* Selected Order Breakdown */}
-        {selectedOrder && (
+        {selectedOrder !== undefined && (
           <div className="border border-purple-200 dark:border-purple-900/50 rounded-2xl p-6 bg-white dark:bg-gray-900 shadow-md space-y-6">
             <div className="flex flex-wrap justify-between items-center gap-4 border-b border-gray-100 dark:border-gray-800 pb-4">
               <div>
                 <h3 className="text-lg font-extrabold text-gray-800 dark:text-gray-200">
-                  Fulfill Order <span className="font-mono text-purple-600 dark:text-purple-400">#{selectedOrder.id.slice(0, 8)}</span>
+                  Fulfill Order{' '}
+                  <span className="font-mono text-purple-600 dark:text-purple-400">
+                    #{selectedOrder.id.slice(0, 8)}
+                  </span>
                 </h3>
                 <p className="text-xs text-gray-400 font-semibold flex items-center gap-1.5 mt-1">
                   <Clock size={12} />
@@ -221,7 +239,9 @@ export const FulfillmentQueue: React.FC = () => {
               {/* Status Update Actions */}
               {selectedOrder.status !== 'delivered' ? (
                 <button
-                  onClick={() => handleUpdateStatus(selectedOrder.id, selectedOrder.status)}
+                  onClick={() => {
+                    void handleUpdateStatus(selectedOrder.id, selectedOrder.status);
+                  }}
                   className="flex items-center gap-2 px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition shadow-md shadow-purple-500/20"
                 >
                   <CheckCircle2 size={16} />
@@ -238,72 +258,116 @@ export const FulfillmentQueue: React.FC = () => {
 
             {/* Status Change Timestamps Timeline */}
             <div className="p-4 border border-gray-100 dark:border-gray-800 rounded-xl bg-gray-50/50 dark:bg-gray-900/20 space-y-3">
-              <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Delivery Status Log</h4>
+              <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                Delivery Status Log
+              </h4>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
                 <div>
-                  <span className="text-gray-400 block font-semibold uppercase text-[9px]">1. Placed At</span>
+                  <span className="text-gray-400 block font-semibold uppercase text-[9px]">
+                    1. Placed At
+                  </span>
                   <span className="font-bold text-gray-800 dark:text-gray-200">
                     {new Date(selectedOrder.created_at).toLocaleString()}
                   </span>
                 </div>
                 <div>
-                  <span className="text-gray-400 block font-semibold uppercase text-[9px]">2. Packed At</span>
+                  <span className="text-gray-400 block font-semibold uppercase text-[9px]">
+                    2. Packed At
+                  </span>
                   <span className="font-bold text-gray-800 dark:text-gray-200">
-                    {selectedOrder.packed_at ? new Date(selectedOrder.packed_at).toLocaleString() : 'Pending'}
+                    {typeof selectedOrder.packed_at === 'string' &&
+                    selectedOrder.packed_at.length > 0
+                      ? new Date(selectedOrder.packed_at).toLocaleString()
+                      : 'Pending'}
                   </span>
                 </div>
                 <div>
-                  <span className="text-gray-400 block font-semibold uppercase text-[9px]">3. Shipped At</span>
+                  <span className="text-gray-400 block font-semibold uppercase text-[9px]">
+                    3. Shipped At
+                  </span>
                   <span className="font-bold text-gray-800 dark:text-gray-200">
-                    {selectedOrder.out_for_delivery_at ? new Date(selectedOrder.out_for_delivery_at).toLocaleString() : 'Pending'}
+                    {typeof selectedOrder.out_for_delivery_at === 'string' &&
+                    selectedOrder.out_for_delivery_at.length > 0
+                      ? new Date(selectedOrder.out_for_delivery_at).toLocaleString()
+                      : 'Pending'}
                   </span>
                 </div>
                 <div>
-                  <span className="text-gray-400 block font-semibold uppercase text-[9px]">4. Delivered At</span>
+                  <span className="text-gray-400 block font-semibold uppercase text-[9px]">
+                    4. Delivered At
+                  </span>
                   <span className="font-bold text-gray-800 dark:text-gray-200">
-                    {selectedOrder.delivered_at ? new Date(selectedOrder.delivered_at).toLocaleString() : 'Pending'}
+                    {typeof selectedOrder.delivered_at === 'string' &&
+                    selectedOrder.delivered_at.length > 0
+                      ? new Date(selectedOrder.delivered_at).toLocaleString()
+                      : 'Pending'}
                   </span>
                 </div>
               </div>
             </div>
 
             {/* Customer Details & Address */}
-            {selectedDetails && selectedDetails.delivery_address && (
+            {selectedDetails !== null && selectedDetails.delivery_address !== null && (
               <div className="p-4 border border-gray-100 dark:border-gray-800 rounded-xl bg-gray-50/50 dark:bg-gray-900/20 space-y-2">
                 <div className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 uppercase">
                   <MapPin size={12} />
-                  <span>Ship To: {selectedDetails.delivery_address.label || 'Home'}</span>
+                  <span>
+                    Ship To:{' '}
+                    {typeof selectedDetails.delivery_address.label === 'string' &&
+                    selectedDetails.delivery_address.label.trim().length > 0
+                      ? selectedDetails.delivery_address.label
+                      : 'Home'}
+                  </span>
                 </div>
                 <p className="text-xs text-gray-800 dark:text-gray-300 font-medium">
-                  {selectedDetails.delivery_address.line1}
-                  {selectedDetails.delivery_address.line2 ? `, ${selectedDetails.delivery_address.line2}` : ''}
+                  {String(selectedDetails.delivery_address.line1 ?? '')}
+                  {typeof selectedDetails.delivery_address.line2 === 'string' &&
+                  selectedDetails.delivery_address.line2.trim().length > 0
+                    ? `, ${selectedDetails.delivery_address.line2}`
+                    : ''}
                 </p>
                 <p className="text-[10px] text-gray-400">
-                  {selectedDetails.delivery_address.city}, {selectedDetails.delivery_address.state} - {selectedDetails.delivery_address.postal_code}, {selectedDetails.delivery_address.country}
+                  {String(selectedDetails.delivery_address.city ?? '')},{' '}
+                  {String(selectedDetails.delivery_address.state ?? '')} -{' '}
+                  {String(selectedDetails.delivery_address.postal_code ?? '')},{' '}
+                  {String(selectedDetails.delivery_address.country ?? '')}
                 </p>
               </div>
             )}
 
             {/* Items List */}
             <div className="space-y-3">
-              <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Items to Pack</h4>
+              <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                Items to Pack
+              </h4>
               {!selectedDetails ? (
                 <div className="text-xs text-gray-400 text-center py-4">Loading items...</div>
               ) : (
                 <div className="divide-y divide-gray-100 dark:divide-gray-800 border border-gray-100 dark:border-gray-800 rounded-xl bg-white dark:bg-gray-950/40 overflow-hidden">
                   {selectedDetails.items.map((item) => (
-                    <div key={item.id} className="p-4 flex items-center justify-between gap-4 text-xs">
+                    <div
+                      key={item.id}
+                      className="p-4 flex items-center justify-between gap-4 text-xs"
+                    >
                       <div className="flex items-center gap-3">
-                        {item.product?.image_url ? (
-                          <img src={item.product.image_url} alt={item.product.name} className="w-10 h-10 rounded-lg object-cover" />
+                        {typeof item.product?.image_url === 'string' &&
+                        item.product.image_url.trim().length > 0 ? (
+                          <img
+                            src={item.product.image_url}
+                            alt={item.product.name}
+                            className="w-10 h-10 rounded-lg object-cover"
+                          />
                         ) : (
                           <div className="w-10 h-10 rounded-lg bg-purple-100 dark:bg-purple-900/20 flex items-center justify-center font-bold text-purple-600">
-                            {item.product?.name?.slice(0, 1) || 'P'}
+                            {item.product?.name?.slice(0, 1) ?? 'P'}
                           </div>
                         )}
                         <div>
                           <p className="font-bold text-gray-800 dark:text-gray-200">
-                            {item.product?.name || 'Unknown Product'}
+                            {typeof item.product?.name === 'string' &&
+                            item.product.name.trim().length > 0
+                              ? item.product.name
+                              : 'Unknown Product'}
                           </p>
                           <p className="text-[10px] text-gray-500 font-semibold">
                             €{item.price_at_purchase.toFixed(2)} each
@@ -328,10 +392,12 @@ export const FulfillmentQueue: React.FC = () => {
       </div>
 
       <CustomDialog
-        isOpen={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        title={dialogTitle}
-        message={dialogMessage}
+        {...{
+          isOpen: dialogOpen,
+          onClose: () => setDialogOpen(false),
+          title: dialogTitle,
+          message: dialogMessage,
+        }}
       />
     </div>
   );

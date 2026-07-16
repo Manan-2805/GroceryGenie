@@ -44,7 +44,7 @@ export const Checkout: React.FC = () => {
       setSavedAddresses(list);
       if (list.length > 0) {
         const defaultAddr = list.find((a) => a.is_default) || list[0];
-        if (defaultAddr) {
+        if (defaultAddr !== undefined) {
           setSelectedAddressId(defaultAddr.id);
         } else {
           setUseNewAddress(true);
@@ -61,23 +61,27 @@ export const Checkout: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchAddresses();
+    void fetchAddresses();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    let finalAddressPayload: Record<string, any>;
+    let finalAddressPayload: Record<string, string>;
 
     if (useNewAddress) {
-      if (!newAddress.line1 || !newAddress.city || !newAddress.postal_code) {
+      if (
+        newAddress.line1.trim().length === 0 ||
+        newAddress.city.trim().length === 0 ||
+        newAddress.postal_code.trim().length === 0
+      ) {
         showDialog('Error', 'Please fill out all required address fields.');
         return;
       }
       finalAddressPayload = {
         line1: newAddress.line1,
-        line2: newAddress.line2 || '',
-        city: newAddress.city,
-        state: newAddress.state || '',
+        line2: newAddress.line2.trim(),
+        city: newAddress.city.trim(),
+        state: newAddress.state.trim(),
         postal_code: newAddress.postal_code,
         country: newAddress.country,
         label: newAddress.label,
@@ -90,21 +94,21 @@ export const Checkout: React.FC = () => {
       }
       finalAddressPayload = {
         line1: selected.line1,
-        line2: selected.line2 || '',
+        line2: typeof selected.line2 === 'string' ? selected.line2 : '',
         city: selected.city,
-        state: selected.state || '',
+        state: typeof selected.state === 'string' ? selected.state : '',
         postal_code: selected.postal_code,
         country: selected.country,
         label: selected.label,
       };
     }
-    
+
     setPlacing(true);
     try {
       // The backend place_order endpoint expects PlaceOrderPayload which is { delivery_address: dict }
       const order = await orderService.place(finalAddressPayload);
       showDialog('Success', `Order placed successfully! Order ID: ${order.id}`, () => {
-        navigate('/orders');
+        void navigate('/orders');
       });
     } catch (err) {
       console.error(err);
@@ -112,6 +116,20 @@ export const Checkout: React.FC = () => {
     } finally {
       setPlacing(false);
     }
+  };
+
+  const closeDialog = () => {
+    setDialogOpen(false);
+    if (typeof onDialogClose === 'function') {
+      onDialogClose();
+    }
+  };
+
+  const dialogProps = {
+    isOpen: dialogOpen,
+    title: dialogTitle,
+    message: dialogMessage,
+    onClose: closeDialog,
   };
 
   if (loading) {
@@ -122,10 +140,15 @@ export const Checkout: React.FC = () => {
     <div className="max-w-xl mx-auto py-8 px-4 space-y-6 text-left">
       <div>
         <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">Checkout</h1>
-        <p className="text-sm text-gray-500">Select or enter a delivery address to complete your order</p>
+        <p className="text-sm text-gray-500">
+          Select or enter a delivery address to complete your order
+        </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="border rounded-2xl glassmorphism p-6 shadow-md space-y-6">
+      <form
+        onSubmit={handleSubmit}
+        className="border rounded-2xl glassmorphism p-6 shadow-md space-y-6"
+      >
         <h3 className="font-bold text-lg text-gray-800 dark:text-gray-200 flex items-center gap-2 border-b pb-3 dark:border-gray-900">
           <ShieldCheck className="text-purple-600" />
           <span>Delivery Details</span>
@@ -134,7 +157,9 @@ export const Checkout: React.FC = () => {
         {/* Saved Addresses Section */}
         {savedAddresses.length > 0 && (
           <div className="space-y-3">
-            <label className="text-xs font-bold text-gray-500 uppercase">Select Delivery Address</label>
+            <label className="text-xs font-bold text-gray-500 uppercase">
+              Select Delivery Address
+            </label>
             <div className="grid grid-cols-1 gap-3">
               {savedAddresses.map((addr) => {
                 const isSelected = !useNewAddress && selectedAddressId === addr.id;
@@ -152,14 +177,21 @@ export const Checkout: React.FC = () => {
                     }`}
                   >
                     <div className="mt-0.5 text-purple-600">
-                      {addr.label?.toLowerCase() === 'work' ? <Briefcase size={16} /> : <HomeIcon size={16} />}
+                      {typeof addr.label === 'string' && addr.label.toLowerCase() === 'work' ? (
+                        <Briefcase size={16} />
+                      ) : (
+                        <HomeIcon size={16} />
+                      )}
                     </div>
                     <div className="flex-1 text-xs">
                       <p className="font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wide text-[9px] mb-1">
-                        {addr.label} {addr.is_default && '(Default)'}
+                        {addr.label} {addr.is_default === true ? '(Default)' : ''}
                       </p>
                       <p className="font-medium text-gray-800 dark:text-gray-300">
-                        {addr.line1} {addr.line2 ? `, ${addr.line2}` : ''}
+                        {addr.line1}{' '}
+                        {typeof addr.line2 === 'string' && addr.line2.trim().length > 0
+                          ? `, ${addr.line2}`
+                          : ''}
                       </p>
                       <p className="text-gray-400 mt-0.5">
                         {addr.city}, {addr.state} - {addr.postal_code}, {addr.country}
@@ -169,14 +201,12 @@ export const Checkout: React.FC = () => {
                 );
               })}
             </div>
-            
+
             <button
               type="button"
               onClick={() => setUseNewAddress(true)}
               className={`flex items-center gap-1.5 text-xs font-bold transition mt-2 ${
-                useNewAddress
-                  ? 'text-purple-600'
-                  : 'text-gray-500 hover:text-purple-600'
+                useNewAddress ? 'text-purple-600' : 'text-gray-500 hover:text-purple-600'
               }`}
             >
               <PlusCircle size={16} />
@@ -195,7 +225,7 @@ export const Checkout: React.FC = () => {
                   type="button"
                   onClick={() => {
                     setUseNewAddress(false);
-                    if (savedAddresses.length > 0 && !selectedAddressId) {
+                    if (savedAddresses.length > 0 && selectedAddressId === null) {
                       const firstAddr = savedAddresses[0];
                       if (firstAddr) {
                         setSelectedAddressId(firstAddr.id);
@@ -212,7 +242,9 @@ export const Checkout: React.FC = () => {
             {/* Address Label */}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-gray-500 uppercase">Address Label</label>
+                <label className="text-[10px] font-bold text-gray-500 uppercase">
+                  Address Label
+                </label>
                 <input
                   type="text"
                   required
@@ -237,7 +269,9 @@ export const Checkout: React.FC = () => {
 
             {/* Line 1 */}
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-gray-500 uppercase">Street Address</label>
+              <label className="text-[10px] font-bold text-gray-500 uppercase">
+                Street Address
+              </label>
               <input
                 type="text"
                 required
@@ -250,7 +284,9 @@ export const Checkout: React.FC = () => {
 
             {/* Line 2 */}
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-gray-500 uppercase">Apt, Suite, Unit (Optional)</label>
+              <label className="text-[10px] font-bold text-gray-500 uppercase">
+                Apt, Suite, Unit (Optional)
+              </label>
               <input
                 type="text"
                 value={newAddress.line2}
@@ -312,15 +348,7 @@ export const Checkout: React.FC = () => {
         </div>
       </form>
 
-      <CustomDialog
-        isOpen={dialogOpen}
-        title={dialogTitle}
-        message={dialogMessage}
-        onClose={() => {
-          setDialogOpen(false);
-          if (onDialogClose) onDialogClose();
-        }}
-      />
+      <CustomDialog {...dialogProps} />
     </div>
   );
 };

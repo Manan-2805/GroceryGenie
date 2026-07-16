@@ -1,15 +1,21 @@
-import { Trash2, MapPin, Plus } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import { Trash2, MapPin, Plus, Check, PenLine } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
 
+import { DataTable } from '../components/DataTable';
 import { memoryService, PersistentFact, addressService, Address } from '../services/api';
 import { useUIStore } from '../store/uiStore';
 
 type SettingsProps = {
   userRole: string;
   onRoleChange: (newRole: 'customer' | 'seller') => void;
-}
+};
 
 export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) => {
+  if (import.meta.env.DEV) {
+    // eslint-disable-next-line no-console
+    console.log('[Dev Render] Settings Page');
+  }
+
   const { theme, setTheme } = useUIStore();
 
   const [facts, setFacts] = useState<PersistentFact[]>([]);
@@ -19,6 +25,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [loadingAddresses, setLoadingAddresses] = useState(false);
   const [showAddressForm, setShowAddressForm] = useState(false);
+  const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
   const [addressForm, setAddressForm] = useState({
     label: 'Home',
     line1: '',
@@ -29,35 +36,35 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
     country: 'Ireland',
   });
 
-  const fetchFacts = async () => {
+  const fetchFacts = useCallback(async () => {
     setLoadingFacts(true);
     try {
       const res = await memoryService.listFacts();
       setFacts(res);
-    } catch (e) {
-      console.error('Failed to load facts', e);
+    } catch (error) {
+      console.error('Failed to load facts', error);
     } finally {
       setLoadingFacts(false);
     }
-  };
+  }, []);
 
-  const fetchAddresses = async () => {
+  const fetchAddresses = useCallback(async () => {
     if (userRole !== 'customer') return;
     setLoadingAddresses(true);
     try {
       const res = await addressService.list();
       setAddresses(res);
-    } catch (e) {
-      console.error('Failed to load addresses', e);
+    } catch (error) {
+      console.error('Failed to load addresses', error);
     } finally {
       setLoadingAddresses(false);
     }
-  };
+  }, [userRole]);
 
   useEffect(() => {
     void fetchFacts();
     void fetchAddresses();
-  }, [userRole]);
+  }, [fetchAddresses, fetchFacts]);
 
   const handleDeleteFact = async (id: string) => {
     try {
@@ -68,22 +75,34 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
     }
   };
 
-  const handleCreateAddress = async (e: React.FormEvent) => {
+  const handleSaveAddress = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!addressForm.label || !addressForm.line1 || !addressForm.city || !addressForm.postal_code) {
       return;
     }
 
     try {
-      await addressService.create({
-        label: addressForm.label,
-        line1: addressForm.line1,
-        line2: addressForm.line2 || '',
-        city: addressForm.city,
-        state: addressForm.state,
-        postal_code: addressForm.postal_code,
-        country: addressForm.country,
-      });
+      if (editingAddressId !== null) {
+        await addressService.update(editingAddressId, {
+          label: addressForm.label,
+          line1: addressForm.line1,
+          line2: addressForm.line2 || '',
+          city: addressForm.city,
+          state: addressForm.state,
+          postal_code: addressForm.postal_code,
+          country: addressForm.country,
+        });
+      } else {
+        await addressService.create({
+          label: addressForm.label,
+          line1: addressForm.line1,
+          line2: addressForm.line2 || '',
+          city: addressForm.city,
+          state: addressForm.state,
+          postal_code: addressForm.postal_code,
+          country: addressForm.country,
+        });
+      }
       setAddressForm({
         label: 'Home',
         line1: '',
@@ -93,10 +112,11 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
         postal_code: '',
         country: 'Ireland',
       });
+      setEditingAddressId(null);
       setShowAddressForm(false);
       await fetchAddresses();
     } catch (e) {
-      console.error('Failed to create address', e);
+      console.error('Failed to save address', e);
     }
   };
 
@@ -122,7 +142,9 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
     <div className="max-w-2xl mx-auto py-8 px-4 space-y-8 text-left">
       <div>
         <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">Settings</h1>
-        <p className="text-sm text-gray-500">Manage your theme, role, addresses, and agent memories</p>
+        <p className="text-sm text-gray-500">
+          Manage your theme, role, addresses, and agent memories
+        </p>
       </div>
 
       {/* Theme Control */}
@@ -191,7 +213,19 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
               <span>Saved Addresses</span>
             </h3>
             <button
-              onClick={() => setShowAddressForm(!showAddressForm)}
+              onClick={() => {
+                setEditingAddressId(null);
+                setAddressForm({
+                  label: 'Home',
+                  line1: '',
+                  line2: '',
+                  city: '',
+                  state: '',
+                  postal_code: '',
+                  country: 'Ireland',
+                });
+                setShowAddressForm(!showAddressForm);
+              }}
               className="flex items-center gap-1 px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition shadow-sm"
             >
               <Plus size={14} />
@@ -201,9 +235,14 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
 
           {/* Add Address Form */}
           {showAddressForm && (
-            <form onSubmit={handleCreateAddress} className="p-4 border dark:border-gray-900 rounded-xl bg-gray-50 dark:bg-gray-900/40 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <form
+              onSubmit={handleSaveAddress}
+              className="p-4 border dark:border-gray-900 rounded-xl bg-gray-50 dark:bg-gray-900/40 grid grid-cols-1 md:grid-cols-2 gap-4"
+            >
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-gray-400">Label (e.g. Home, Office)</label>
+                <label className="text-[10px] font-bold text-gray-400">
+                  Label (e.g. Home, Office)
+                </label>
                 <input
                   type="text"
                   required
@@ -227,7 +266,9 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-gray-400">Apt, Suite, Unit (Optional)</label>
+                <label className="text-[10px] font-bold text-gray-400">
+                  Apt, Suite, Unit (Optional)
+                </label>
                 <input
                   type="text"
                   value={addressForm.line2}
@@ -287,7 +328,19 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
               <div className="md:col-span-2 flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowAddressForm(false)}
+                  onClick={() => {
+                    setEditingAddressId(null);
+                    setAddressForm({
+                      label: 'Home',
+                      line1: '',
+                      line2: '',
+                      city: '',
+                      state: '',
+                      postal_code: '',
+                      country: 'Ireland',
+                    });
+                    setShowAddressForm(false);
+                  }}
                   className="px-4 py-2 border dark:border-gray-800 text-gray-500 rounded-lg text-xs font-bold hover:bg-gray-50 dark:hover:bg-gray-900 transition"
                 >
                   Cancel
@@ -310,55 +363,106 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
               No addresses saved yet. Click "Add New" to add one!
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {addresses.map((address) => (
-                <div key={address.id} className={`p-4 border rounded-xl flex flex-col justify-between space-y-3 relative shadow-sm ${address.is_default ? 'border-purple-600 bg-purple-500/5 dark:bg-purple-950/10' : 'dark:border-gray-900 bg-white dark:bg-gray-950/20'}`}>
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase">{address.label}</span>
-                      {address.is_default && (
-                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 border border-purple-200">
-                          Default
-                        </span>
-                      )}
+            <DataTable
+              columns={[
+                {
+                  key: 'label',
+                  header: 'Label',
+                  render: (val) => (
+                    <span className="font-bold text-gray-800 dark:text-gray-200 uppercase text-xs">
+                      {String(val)}
+                    </span>
+                  ),
+                },
+                {
+                  key: 'line1',
+                  header: 'Address',
+                  render: (_, item) => (
+                    <div className="text-xs">
+                      <p className="font-semibold text-gray-800 dark:text-gray-300">{item.line1}</p>
+                      {typeof item.line2 === 'string' && item.line2.trim().length > 0 ? (
+                        <p className="text-gray-450">{item.line2}</p>
+                      ) : null}
+                      <p className="text-gray-450 dark:text-gray-500 mt-0.5">
+                        {item.city}, {item.state} {item.postal_code}, {item.country}
+                      </p>
                     </div>
-                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">{address.line1}</p>
-                    {address.line2 && <p className="text-xs text-gray-600 dark:text-gray-400">{address.line2}</p>}
-                    <p className="text-xs text-gray-600 dark:text-gray-400">
-                      {address.city}, {address.state} {address.postal_code}
-                    </p>
-                    <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">{address.country}</p>
-                  </div>
-
-                  <div className="flex gap-2 justify-end pt-2 border-t dark:border-gray-900">
-                    {!address.is_default && (
+                  ),
+                },
+                {
+                  key: 'is_default',
+                  header: 'Status',
+                  render: (val) =>
+                    val === true ? (
+                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 border border-purple-200">
+                        Default
+                      </span>
+                    ) : (
+                      <span className="text-[9px] text-gray-450 dark:text-gray-500">
+                        Alternative
+                      </span>
+                    ),
+                },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  render: (_, item) => (
+                    <div className="flex gap-1.5 justify-center">
+                      {!item.is_default && (
+                        <button
+                          onClick={() => handleSetDefaultAddress(item.id)}
+                          title="Set Default"
+                          className="p-1 text-purple-600 border border-purple-200 hover:bg-purple-50 dark:border-purple-900/40 dark:hover:bg-purple-950/20 rounded-lg transition"
+                        >
+                          <Check size={14} />
+                        </button>
+                      )}
                       <button
-                        onClick={() => handleSetDefaultAddress(address.id)}
-                        className="flex items-center gap-0.5 px-2 py-1 border dark:border-gray-800 text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950/20 rounded-md text-[10px] font-bold transition"
+                        onClick={() => {
+                          setEditingAddressId(item.id);
+                          setAddressForm({
+                            label: item.label,
+                            line1: item.line1,
+                            line2: item.line2 ?? '',
+                            city: item.city,
+                            state: item.state,
+                            postal_code: item.postal_code,
+                            country: item.country,
+                          });
+                          setShowAddressForm(true);
+                        }}
+                        title="Edit Address"
+                        className="p-1 text-blue-600 border border-blue-200 hover:bg-blue-50 dark:border-blue-900/40 dark:hover:bg-blue-950/20 rounded-lg transition"
                       >
-                        <Trash2 size={14} className="inline mr-1" />
-                        <span>Set Default</span>
+                        <PenLine size={14} />
                       </button>
-                    )}
-                    <button
-                      onClick={() => handleDeleteAddress(address.id)}
-                      className="p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-md transition"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+                      <button
+                        onClick={() => handleDeleteAddress(item.id)}
+                        title="Delete Address"
+                        className="p-1 text-red-500 border border-red-200 hover:bg-red-50 dark:border-red-900/40 dark:hover:bg-red-950/20 rounded-lg transition"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ),
+                },
+              ]}
+              data={addresses}
+              noDataMessage="No addresses match"
+              exportFileName="saved_addresses"
+            />
           )}
         </div>
       )}
 
       {/* Facts Memory manager */}
       <div className="p-6 border rounded-xl glassmorphism space-y-4">
-        <h3 className="font-bold text-lg text-gray-800 dark:text-gray-200">What I remember about you</h3>
+        <h3 className="font-bold text-lg text-gray-800 dark:text-gray-200">
+          What I remember about you
+        </h3>
         <p className="text-xs text-gray-500">
-          The agent automatically extracts standing facts (like dietary preferences and allergies) to customize responses. Delete items below if you no longer wish them to be remembered.
+          The agent automatically extracts standing facts (like dietary preferences and allergies)
+          to customize responses. Delete items below if you no longer wish them to be remembered.
         </p>
 
         {loadingFacts ? (

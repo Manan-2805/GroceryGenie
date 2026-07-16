@@ -1,13 +1,19 @@
 import { Search, Filter, Star } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 
 import { productService, Product } from '../services/api';
 
 export const Catalog: React.FC = () => {
+  if (import.meta.env.DEV) {
+    // eslint-disable-next-line no-console
+    console.log('[Dev Render] Catalog Page');
+  }
+
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
-  
+  const loadingRef = useRef(false);
+
   // Filter & Search states
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
@@ -15,7 +21,7 @@ export const Catalog: React.FC = () => {
   const [maxPrice, setMaxPrice] = useState<string>('');
   const [minRating, setMinRating] = useState<number>(0);
   const [onlyInStock, setOnlyInStock] = useState<boolean>(false);
-  
+
   // Sort states
   const [sortBy, setSortBy] = useState<string>('name');
   const [sortDir, setSortDir] = useState<string>('asc');
@@ -23,58 +29,73 @@ export const Catalog: React.FC = () => {
   // Pagination states
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  
+
   // Hardcoded standard categories for filters
   const categories = ['Dairy & Eggs', 'Produce', 'Pantry', 'Bakery', 'Beverages'];
 
-  const fetchProducts = async (pageNum: number, append: boolean = false) => {
-    if (loading) return;
-    setLoading(true);
-    try {
-      const data = await productService.list(
-        selectedCategory || undefined,
-        undefined,
-        pageNum,
-        10, // 10 products per page
-        minPrice ? parseFloat(minPrice) : undefined,
-        maxPrice ? parseFloat(maxPrice) : undefined,
-        minRating > 0 ? minRating : undefined,
-        onlyInStock || undefined,
-        searchQuery || undefined,
-        sortBy || undefined,
-        sortDir || undefined
-      );
+  const fetchProducts = useCallback(
+    async (pageNum: number, append: boolean = false) => {
+      if (loadingRef.current) return;
+      loadingRef.current = true;
+      setLoading(true);
+      try {
+        const data = await productService.list(
+          selectedCategory.length > 0 ? selectedCategory : undefined,
+          undefined,
+          pageNum,
+          10,
+          minPrice.length > 0 ? parseFloat(minPrice) : undefined,
+          maxPrice.length > 0 ? parseFloat(maxPrice) : undefined,
+          minRating > 0 ? minRating : undefined,
+          onlyInStock || undefined,
+          searchQuery.length > 0 ? searchQuery : undefined,
+          sortBy.length > 0 ? sortBy : undefined,
+          sortDir.length > 0 ? sortDir : undefined
+        );
 
-      if (append) {
-        setProducts((prev) => {
-          // Filter out duplicates to avoid duplicate key warnings
-          const existingIds = new Set(prev.map(p => p.id));
-          const newItems = data.items.filter(item => !existingIds.has(item.id));
-          return [...prev, ...newItems];
-        });
-      } else {
-        setProducts(data.items);
+        if (append) {
+          setProducts((prev) => {
+            // Filter out duplicates to avoid duplicate key warnings
+            const existingIds = new Set(prev.map((p) => p.id));
+            const newItems = data.items.filter((item) => !existingIds.has(item.id));
+            return [...prev, ...newItems];
+          });
+        } else {
+          setProducts(data.items);
+        }
+        setTotalPages(data.pages);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        loadingRef.current = false;
+        setLoading(false);
       }
-      setTotalPages(data.pages);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+    },
+    [maxPrice, minPrice, minRating, onlyInStock, searchQuery, selectedCategory, sortBy, sortDir]
+  );
 
   // Triggered when filters change: reset page to 1 and replace list
   useEffect(() => {
     setPage(1);
-    fetchProducts(1, false);
-  }, [selectedCategory, minPrice, maxPrice, minRating, onlyInStock, searchQuery, sortBy, sortDir]);
+    void fetchProducts(1, false);
+  }, [
+    fetchProducts,
+    selectedCategory,
+    minPrice,
+    maxPrice,
+    minRating,
+    onlyInStock,
+    searchQuery,
+    sortBy,
+    sortDir,
+  ]);
 
   // Triggered when infinite scroll increments page
   useEffect(() => {
     if (page > 1) {
-      fetchProducts(page, true);
+      void fetchProducts(page, true);
     }
-  }, [page]);
+  }, [fetchProducts, page]);
 
   // Infinite scroll listener
   useEffect(() => {
@@ -134,7 +155,9 @@ export const Catalog: React.FC = () => {
             >
               <option value="">All Categories</option>
               {categories.map((c) => (
-                <option key={c} value={c}>{c}</option>
+                <option key={c} value={c}>
+                  {c}
+                </option>
               ))}
             </select>
           </div>
@@ -187,7 +210,9 @@ export const Catalog: React.FC = () => {
 
           {/* Stock Availability */}
           <div className="flex items-center justify-between pt-2 border-t dark:border-gray-800">
-            <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">In Stock Only</label>
+            <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+              In Stock Only
+            </label>
             <input
               type="checkbox"
               checked={onlyInStock}
@@ -212,7 +237,9 @@ export const Catalog: React.FC = () => {
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-gray-400 uppercase">Sort Direction</label>
+              <label className="text-[10px] font-bold text-gray-400 uppercase">
+                Sort Direction
+              </label>
               <select
                 value={sortDir}
                 onChange={(e) => setSortDir(e.target.value)}
@@ -242,7 +269,11 @@ export const Catalog: React.FC = () => {
                   {/* Product Image */}
                   <div className="h-44 w-full bg-gray-50 dark:bg-gray-950/40 p-4 flex items-center justify-center border-b dark:border-gray-800">
                     <img
-                      src={product.image_url || 'https://via.placeholder.com/150'}
+                      src={
+                        typeof product.image_url === 'string' && product.image_url.trim().length > 0
+                          ? product.image_url
+                          : 'https://via.placeholder.com/150'
+                      }
                       alt={product.name}
                       className="h-full object-contain group-hover:scale-105 transition duration-300"
                     />
@@ -256,22 +287,23 @@ export const Catalog: React.FC = () => {
                           {product.category}
                         </span>
                         <span className="text-xs font-bold text-amber-500 flex items-center gap-0.5">
-                          {(product.avg_rating || 0).toFixed(1)} <Star size={10} className="fill-amber-400 text-amber-400" />
+                          {(product.avg_rating || 0).toFixed(1)}{' '}
+                          <Star size={10} className="fill-amber-400 text-amber-400" />
                         </span>
                       </div>
                       <h3 className="font-extrabold text-sm text-gray-800 dark:text-gray-200">
                         {product.name}
                       </h3>
-                      <p className="text-xs text-gray-400 line-clamp-2">
-                        {product.description}
-                      </p>
+                      <p className="text-xs text-gray-400 line-clamp-2">{product.description}</p>
                     </div>
 
                     <div className="flex justify-between items-center pt-2">
                       <span className="text-base font-black text-purple-600 dark:text-purple-400">
                         €{product.price.toFixed(2)}
                       </span>
-                      <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${product.stock > 0 ? 'bg-gray-100 dark:bg-gray-800 text-gray-500' : 'bg-red-50 text-red-600 dark:bg-red-950/20'}`}>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded font-bold ${product.stock > 0 ? 'bg-gray-100 dark:bg-gray-800 text-gray-500' : 'bg-red-50 text-red-600 dark:bg-red-950/20'}`}
+                      >
                         {product.stock > 0 ? `${product.stock} in stock` : 'Out of stock'}
                       </span>
                     </div>

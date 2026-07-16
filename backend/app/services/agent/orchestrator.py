@@ -308,7 +308,7 @@ Return JSON ONLY:
                 f"[Permission Required] {proposed_mutation['summary']}",
             )
 
-            trace.end(output="PAUSED: Permission Required")
+            trace.update(output="PAUSED: Permission Required")
 
             return {
                 "type": "permission_request",
@@ -359,7 +359,7 @@ Return JSON ONLY:
             str(self.session_id), "assistant", synth_data["text"]
         )
 
-        trace.end(output=synth_data["text"])
+        trace.update(output=synth_data["text"])
 
         return {
             "type": "response",
@@ -436,12 +436,12 @@ Return JSON ONLY:
             await append_message_to_session(
                 str(self.session_id), "assistant", response_text
             )
-            trace.end(output=response_text)
+            trace.update(output=response_text)
             return {"type": "response", "text": response_text}
 
         except Exception as e:
             logger.error(f"Failed to execute approved mutation: {e}")
-            trace.end(output=f"Error: {e}", level="ERROR")
+            trace.update(output=f"Error: {e}")
             return {
                 "type": "response",
                 "text": "I encountered an error trying to complete that action.",

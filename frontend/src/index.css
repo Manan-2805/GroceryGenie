@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+#root {
+  height: 100vh;
+}
+
 :root {
   --text: #6b6375;
   --text-h: #08060d;
@@ -21,10 +25,12 @@
   background-color: var(--bg);
   color: var(--text);
   font-family: var(--sans);
-  transition: background-color 0.3s ease, color 0.3s ease;
+  transition:
+    background-color 0.3s ease,
+    color 0.3s ease;
 }
 
-html[data-theme="dark"] {
+html[data-theme='dark'] {
   --text: #9ca3af;
   --text-h: #f3f4f6;
   --bg: #0f1015;
@@ -53,7 +59,7 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-html[data-theme="dark"] .glassmorphism {
+html[data-theme='dark'] .glassmorphism {
   background: rgba(22, 23, 29, 0.7);
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
@@ -63,13 +69,16 @@ html[data-theme="dark"] .glassmorphism {
   width: 6px;
   height: 6px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 3px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: var(--accent);
 }

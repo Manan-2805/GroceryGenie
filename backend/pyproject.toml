@@ -64,6 +64,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "e2e: end-to-end tests that require running backend/frontend services and browser",
+]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"

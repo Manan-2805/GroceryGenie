@@ -7,7 +7,17 @@ import { useUIStore } from '../store/uiStore';
 type Message = {
   role: 'user' | 'assistant';
   content: string;
-}
+};
+
+type StreamEvent =
+  | { type: 'delta'; text: string }
+  | {
+      type: 'permission_request';
+      summary: string;
+      action: string;
+      payload: Record<string, unknown>;
+    }
+  | { type: 'navigate_to'; path: string; label: string };
 
 export const ChatBubble: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -33,7 +43,9 @@ export const ChatBubble: React.FC = () => {
   const handleStartTextChat = () => {
     setMode('text');
     setChatError(false);
-    setMessages([{ role: 'assistant', content: 'Hi! I am your AI assistant. How can I help you today?' }]);
+    setMessages([
+      { role: 'assistant', content: 'Hi! I am your AI assistant. How can I help you today?' },
+    ]);
     // Reset session ID
     setSessionId(uuidv4());
   };
@@ -64,11 +76,11 @@ export const ChatBubble: React.FC = () => {
   const sendTextMessage = async (
     msgText: string,
     approvedAction?: string,
-    approvedPayload?: any
+    approvedPayload?: Record<string, unknown>
   ) => {
-    if (!msgText.strip() && !approvedAction) return;
+    if (msgText.trim().length === 0 && approvedAction === undefined) return;
 
-    if (!approvedAction) {
+    if (approvedAction === undefined) {
       setMessages((prev) => [...prev, { role: 'user', content: msgText }]);
       setTextInput('');
     }
@@ -79,7 +91,7 @@ export const ChatBubble: React.FC = () => {
       // Add loading placeholder message
       setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
 
-      const response = await fetch('http://localhost:8000/api/v1/chat/text', {
+      const response = await fetch('/api/v1/chat/text', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -103,26 +115,35 @@ export const ChatBubble: React.FC = () => {
       const decoder = new TextDecoder();
       let assistantResponse = '';
 
-      while (true) {
+      let hasMoreChunks = true;
+      while (hasMoreChunks) {
         const { value, done } = await reader.read();
-        if (done) break;
+        if (done) {
+          hasMoreChunks = false;
+          continue;
+        }
 
         const rawText = decoder.decode(value);
         const lines = rawText.split('\n');
 
         for (const line of lines) {
           if (line.startsWith('data:')) {
-            const dataStr = line.replace('data:', '').strip();
+            const dataStr = line.replace('data:', '').trim();
             try {
-              const data = JSON.parse(dataStr);
-              if (data.type === 'delta') {
+              const data = JSON.parse(dataStr) as Partial<StreamEvent> & Record<string, unknown>;
+              if (data.type === 'delta' && typeof data.text === 'string') {
                 assistantResponse += data.text;
                 setMessages((prev) => {
                   const updated = [...prev];
                   updated[updated.length - 1] = { role: 'assistant', content: assistantResponse };
                   return updated;
                 });
-              } else if (data.type === 'permission_request') {
+              } else if (
+                data.type === 'permission_request' &&
+                typeof data.summary === 'string' &&
+                typeof data.action === 'string' &&
+                data.payload !== undefined
+              ) {
                 // Intercept permission request inside text chat
                 setMessages((prev) => {
                   const updated = [...prev];
@@ -139,7 +160,11 @@ export const ChatBubble: React.FC = () => {
                     content: `[PERMISSION_REQUEST] ${data.summary}|${data.action}|${JSON.stringify(data.payload)}`,
                   },
                 ]);
-              } else if (data.type === 'navigate_to') {
+              } else if (
+                data.type === 'navigate_to' &&
+                typeof data.path === 'string' &&
+                typeof data.label === 'string'
+              ) {
                 // Trigger global navigation event
                 window.dispatchEvent(
                   new CustomEvent('agent-navigate', {
@@ -147,7 +172,7 @@ export const ChatBubble: React.FC = () => {
                   })
                 );
               }
-            } catch (e) {
+            } catch {
               // Parsing error
             }
           }
@@ -161,7 +186,8 @@ export const ChatBubble: React.FC = () => {
         // Replace loading placeholder with error details
         updated[updated.length - 1] = {
           role: 'assistant',
-          content: 'Error: Failed to connect to GroceryGenie assistant. Please verify that you are logged in and the server is running.',
+          content:
+            'Error: Failed to connect to GroceryGenie assistant. Please verify that you are logged in and the server is running.',
         };
         return updated;
       });
@@ -170,14 +196,14 @@ export const ChatBubble: React.FC = () => {
     }
   };
 
-  const handleTextSubmit = (e: React.FormEvent) => {
+  const handleTextSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (chatError || textInput.length > 200) return;
-    sendTextMessage(textInput);
+    void sendTextMessage(textInput);
   };
 
   const renderPermissionBox = (summary: string, action: string, payloadStr: string) => {
-    const payload = JSON.parse(payloadStr);
+    const payload = JSON.parse(payloadStr) as Record<string, unknown>;
     return (
       <div className="p-3 my-2 border rounded-xl glassmorphism border-amber-300 dark:border-amber-500 bg-amber-50 dark:bg-amber-950/20 text-left">
         <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-semibold mb-2">
@@ -250,7 +276,7 @@ export const ChatBubble: React.FC = () => {
                   <span>Voice services are currently unavailable.</span>
                 </div>
               )}
-              
+
               <div className="flex-1 p-6 flex flex-col justify-center items-center gap-6">
                 <h2 className="text-xl font-bold text-center text-gray-800 dark:text-gray-200">
                   Choose Chat Mode
@@ -264,7 +290,13 @@ export const ChatBubble: React.FC = () => {
                     <span className="font-semibold text-sm">Text Chat</span>
                   </button>
                   <button
-                    onClick={voiceOk ? handleStartVoiceChat : undefined}
+                    onClick={
+                      voiceOk
+                        ? () => {
+                            void handleStartVoiceChat();
+                          }
+                        : undefined
+                    }
                     disabled={!voiceOk}
                     className={`flex-1 py-4 px-3 flex flex-col items-center justify-center gap-2 border rounded-xl transition-all ${
                       voiceOk
@@ -287,28 +319,31 @@ export const ChatBubble: React.FC = () => {
             <>
               {/* Message List */}
               <div className="flex-1 p-4 overflow-y-auto space-y-3 flex flex-col bg-gray-50/50 dark:bg-gray-950/10">
-                {messages.map((m, idx) => {
+                {messages.map((m) => {
                   const isUser = m.role === 'user';
                   const isPermissionRequest = m.content.startsWith('[PERMISSION_REQUEST]');
 
                   if (isPermissionRequest) {
                     const parts = m.content.replace('[PERMISSION_REQUEST] ', '').split('|');
                     return (
-                      <div key={idx}>
-                        {renderPermissionBox(parts[0] || '', parts[1] || '', parts[2] || '{}')}
+                      <div key={`${m.role}-${m.content}`}>
+                        {renderPermissionBox(parts[0] ?? '', parts[1] ?? '', parts[2] ?? '{}')}
                       </div>
                     );
                   }
 
                   return (
                     <div
-                      key={idx}
-                      className={`max-w-[80%] p-3 rounded-2xl text-sm ${isUser
-                        ? 'bg-purple-600 text-white self-end rounded-tr-none'
-                        : 'bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 self-start rounded-tl-none border dark:border-gray-850'
-                        }`}
+                      key={`${m.role}-${m.content}`}
+                      className={`max-w-[80%] p-3 rounded-2xl text-sm ${
+                        isUser
+                          ? 'bg-purple-600 text-white self-end rounded-tr-none'
+                          : 'bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 self-start rounded-tl-none border dark:border-gray-850'
+                      }`}
                     >
-                      {m.content || (
+                      {m.content.length > 0 ? (
+                        m.content
+                      ) : (
                         <div className="flex gap-1 items-center justify-center py-1">
                           <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></span>
                           <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.2s]"></span>
@@ -322,12 +357,15 @@ export const ChatBubble: React.FC = () => {
               </div>
 
               {/* Message Input */}
-              <form onSubmit={handleTextSubmit} className="p-3 border-t dark:border-gray-900 flex gap-2 bg-white dark:bg-gray-950">
+              <form
+                onSubmit={handleTextSubmit}
+                className="p-3 border-t dark:border-gray-900 flex gap-2 bg-white dark:bg-gray-950"
+              >
                 <input
                   type="text"
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
-                  placeholder={chatError ? "Chat connection error..." : "Type your message..."}
+                  placeholder={chatError ? 'Chat connection error...' : 'Type your message...'}
                   maxLength={200}
                   disabled={isSending || chatError}
                   className="flex-1 px-4 py-2 border dark:border-gray-800 bg-transparent rounded-full focus:outline-none focus:ring-1 focus:ring-purple-600 text-sm disabled:opacity-50"
@@ -347,7 +385,7 @@ export const ChatBubble: React.FC = () => {
           {mode === 'voice' && (
             <div className="flex-1 p-6 flex flex-col justify-between items-center bg-gray-50 dark:bg-gray-900/10">
               <div className="text-center space-y-4 w-full">
-                {voiceState.error && (
+                {voiceState.error !== null && (
                   <div className="p-3 border border-red-300 dark:border-red-950/40 bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 rounded-xl text-xs font-semibold text-left flex items-start gap-2 max-w-[320px] mx-auto">
                     <ShieldAlert size={16} className="shrink-0 mt-0.5" />
                     <span>{voiceState.error}</span>
@@ -355,11 +393,17 @@ export const ChatBubble: React.FC = () => {
                 )}
 
                 <h4 className="text-xs uppercase tracking-widest text-purple-600 dark:text-purple-400 font-bold">
-                  {voiceState.status === 'transcribing' && 'Listening...'}
-                  {voiceState.status === 'thinking' && 'Thinking...'}
-                  {voiceState.status === 'speaking' && 'Responding...'}
-                  {voiceState.status === 'idle' && 'Tap mic to talk'}
-                  {voiceState.status === 'waiting_permission' && 'Verification Needed'}
+                  {voiceState.error !== null ? (
+                    'Error'
+                  ) : (
+                    <>
+                      {voiceState.status === 'transcribing' && 'Listening...'}
+                      {voiceState.status === 'thinking' && 'Thinking...'}
+                      {voiceState.status === 'speaking' && 'Responding...'}
+                      {voiceState.status === 'idle' && 'Tap mic to talk'}
+                      {voiceState.status === 'waiting_permission' && 'Verification Needed'}
+                    </>
+                  )}
                 </h4>
 
                 <div className="flex justify-center py-6">
@@ -377,7 +421,7 @@ export const ChatBubble: React.FC = () => {
 
                 <div className="min-h-[60px] max-h-[120px] overflow-y-auto px-4 py-2 border dark:border-gray-800 rounded-xl bg-white dark:bg-gray-950 text-left">
                   <p className="text-xs text-gray-500 dark:text-gray-400 italic">
-                    {voiceState.transcript || '"Speak now..."'}
+                    {voiceState.transcript.length > 0 ? voiceState.transcript : '"Speak now..."'}
                   </p>
                 </div>
               </div>
@@ -430,14 +474,3 @@ export const ChatBubble: React.FC = () => {
 };
 
 // String utility strip helper polyfill
-declare global {
-  interface String {
-    strip(): string;
-  }
-}
-
-if (!String.prototype.strip) {
-  String.prototype.strip = function () {
-    return this.trim();
-  };
-}

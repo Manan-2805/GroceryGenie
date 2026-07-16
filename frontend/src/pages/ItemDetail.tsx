@@ -1,9 +1,26 @@
 import { ShoppingCart, ArrowLeft, MessageCircle, HelpCircle, Star } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 
 import { CustomDialog } from '../components/CustomDialog';
 import { productService, cartService, Product, api } from '../services/api';
+
+type ReviewItem = {
+  created_at: string;
+  user_name?: string;
+  stars?: number;
+  comment?: string;
+};
+
+type ReviewPayload = {
+  metadata: {
+    avg_rating: number;
+    total_count: number;
+    rating_distribution: Record<string, number>;
+  };
+  pages: number;
+  items: ReviewItem[];
+};
 
 export const ItemDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -18,9 +35,8 @@ export const ItemDetail: React.FC = () => {
   const [qaAnswer, setQaAnswer] = useState<string | null>(null);
   const [qaLoading, setQaLoading] = useState(false);
 
-  // Reviews States
-  const [reviews, setReviews] = useState<any[]>([]);
-  const [reviewsMeta, setReviewsMeta] = useState<any>({
+  const [reviews, setReviews] = useState<ReviewItem[]>([]);
+  const [reviewsMeta, setReviewsMeta] = useState<ReviewPayload['metadata']>({
     avg_rating: 0,
     total_count: 0,
     rating_distribution: { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 },
@@ -41,43 +57,50 @@ export const ItemDetail: React.FC = () => {
     setDialogOpen(true);
   };
 
-  const fetchReviews = async (pageNum: number, append: boolean = false) => {
-    if (!id) return;
-    setLoadingReviews(true);
-    try {
-      const res = await api.get(`/ratings/product/${id}`, {
-        params: { page: pageNum, limit: 5 },
-      });
-      setReviewsMeta(res.data.metadata);
-      setReviewsTotalPages(res.data.pages);
-      if (append) {
-        setReviews((prev) => {
-          // Avoid duplicate keys
-          const existingTimestamps = new Set(prev.map(r => new Date(r.created_at).getTime()));
-          const newItems = res.data.items.filter((item: any) => !existingTimestamps.has(new Date(item.created_at).getTime()));
-          return [...prev, ...newItems];
+  const fetchReviews = useCallback(
+    async (pageNum: number, append: boolean = false) => {
+      if (id === undefined) return;
+      setLoadingReviews(true);
+      try {
+        const res = await api.get<ReviewPayload>(`/ratings/product/${id}`, {
+          params: { page: pageNum, limit: 5 },
         });
-      } else {
-        setReviews(res.data.items);
+        const payload = res.data;
+        setReviewsMeta(payload.metadata);
+        setReviewsTotalPages(payload.pages);
+        if (append) {
+          setReviews((prev) => {
+            const existingTimestamps = new Set(
+              prev.map((review) => new Date(review.created_at).getTime())
+            );
+            const newItems = payload.items.filter(
+              (item) => !existingTimestamps.has(new Date(item.created_at).getTime())
+            );
+            return [...prev, ...newItems];
+          });
+        } else {
+          setReviews(payload.items);
+        }
+      } catch (error) {
+        console.error('Error fetching reviews:', error);
+      } finally {
+        setLoadingReviews(false);
       }
-    } catch (e) {
-      console.error('Error fetching reviews:', e);
-    } finally {
-      setLoadingReviews(false);
-    }
-  };
+    },
+    [id]
+  );
 
   const loadMoreReviews = () => {
     if (reviewsPage < reviewsTotalPages && !loadingReviews) {
       const nextPage = reviewsPage + 1;
       setReviewsPage(nextPage);
-      fetchReviews(nextPage, true);
+      void fetchReviews(nextPage, true);
     }
   };
 
   useEffect(() => {
     const fetchProduct = async () => {
-      if (!id) return;
+      if (id === undefined) return;
       try {
         const data = await productService.get(id);
         setProduct(data);
@@ -87,9 +110,9 @@ export const ItemDetail: React.FC = () => {
         setLoading(false);
       }
     };
-    fetchProduct();
-    fetchReviews(1, false);
-  }, [id]);
+    void fetchProduct();
+    void fetchReviews(1, false);
+  }, [fetchReviews, id]);
 
   const handleAddToCart = async () => {
     if (!product) return;
@@ -97,10 +120,15 @@ export const ItemDetail: React.FC = () => {
     try {
       await cartService.add(product.id, quantity);
       showDialog('Success', `Added ${quantity}x ${product.name} to cart.`);
-    } catch (e: any) {
-      console.error(e);
-      const detail = e.response?.data?.detail;
-      showDialog('Error', detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : 'Failed to add item to cart. Make sure you are logged in.');
+    } catch (error: unknown) {
+      console.error(error);
+      const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data
+        ?.detail;
+      const message =
+        typeof detail === 'string'
+          ? detail
+          : 'Failed to add item to cart. Make sure you are logged in.';
+      showDialog('Error', message);
     } finally {
       setAddingToCart(false);
     }
@@ -109,13 +137,13 @@ export const ItemDetail: React.FC = () => {
   const handleQaSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!qaInput.trim() || !product) return;
-    
+
     setQaLoading(true);
     setQaAnswer(null);
-    
+
     try {
       // Include credentials: 'include' for CORS cookies auth
-      const response = await fetch(`http://localhost:8000/api/v1/products/${product.id}/qa`, {
+      const response = await fetch(`/api/v1/products/${product.id}/qa`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -123,36 +151,41 @@ export const ItemDetail: React.FC = () => {
         body: JSON.stringify({ question: qaInput }),
       });
 
-      if (!response.body) throw new Error('No response stream');
+      if (response.body === null) {
+        throw new Error('No response stream');
+      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let answerText = '';
 
-      while (true) {
+      let hasMoreChunks = true;
+      while (hasMoreChunks) {
         const { value, done } = await reader.read();
-        if (done) break;
+        if (done) {
+          hasMoreChunks = false;
+          continue;
+        }
 
         const rawText = decoder.decode(value);
         const lines = rawText.split('\n');
-        
+
         for (const line of lines) {
           if (line.startsWith('data:')) {
             const dataStr = line.replace('data:', '').trim();
             try {
-              const data = JSON.parse(dataStr);
-              if (data.type === 'delta') {
+              const data = JSON.parse(dataStr) as { type?: string; text?: string };
+              if (data.type === 'delta' && typeof data.text === 'string') {
                 answerText += data.text;
                 setQaAnswer(answerText);
               }
-            } catch (err) {
+            } catch {
               // Not JSON delta, ignore
             }
           }
         }
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
       setQaAnswer('Unable to retrieve an answer at this time.');
     } finally {
       setQaLoading(false);
@@ -164,7 +197,7 @@ export const ItemDetail: React.FC = () => {
     return (
       <div className="space-y-2 w-full max-w-xs text-xs font-semibold text-gray-500">
         {[5, 4, 3, 2, 1].map((star) => {
-          const count = reviewsMeta.rating_distribution[star.toString()] || 0;
+          const count = reviewsMeta.rating_distribution[star.toString()] ?? 0;
           const percentage = Math.round((count / total) * 100);
           return (
             <div key={star} className="flex items-center gap-3">
@@ -201,7 +234,10 @@ export const ItemDetail: React.FC = () => {
   return (
     <div className="max-w-5xl mx-auto py-8 px-4 space-y-8 text-left">
       {/* Back button */}
-      <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-sm text-gray-500 hover:text-purple-600 transition">
+      <button
+        onClick={() => navigate(-1)}
+        className="flex items-center gap-2 text-sm text-gray-500 hover:text-purple-600 transition"
+      >
         <ArrowLeft size={16} />
         <span>Back</span>
       </button>
@@ -211,7 +247,7 @@ export const ItemDetail: React.FC = () => {
         {/* Image */}
         <div className="w-full md:w-1/2 bg-gray-50 dark:bg-gray-950/40 p-8 rounded-xl flex items-center justify-center border dark:border-gray-800">
           <img
-            src={product.image_url || 'https://via.placeholder.com/250'}
+            src={product.image_url ?? 'https://via.placeholder.com/250'}
             alt={product.name}
             className="h-64 object-contain rounded-lg"
           />
@@ -225,26 +261,27 @@ export const ItemDetail: React.FC = () => {
                 {product.category}
               </span>
               <span className="text-sm font-bold text-amber-500 flex items-center gap-0.5">
-                {(product.avg_rating || 0).toFixed(1)} <Star size={14} className="fill-amber-400 text-amber-400" />
+                {(product.avg_rating ?? 0).toFixed(1)}{' '}
+                <Star size={14} className="fill-amber-400 text-amber-400" />
               </span>
             </div>
             <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200 mt-2">
               {product.name}
             </h1>
-            <p className="text-sm text-gray-500 mt-3 leading-relaxed">
-              {product.description}
-            </p>
+            <p className="text-sm text-gray-500 mt-3 leading-relaxed">{product.description}</p>
           </div>
 
           <div className="flex items-baseline gap-4">
             <span className="text-4xl font-black text-purple-600 dark:text-purple-400">
               €{product.price.toFixed(2)}
             </span>
-            <span className={`text-xs font-semibold px-2.5 py-0.5 rounded ${
-              product.stock > 0
-                ? 'bg-green-100 dark:bg-green-950/40 text-green-600 dark:text-green-400'
-                : 'bg-red-100 dark:bg-red-950/40 text-red-600'
-            }`}>
+            <span
+              className={`text-xs font-semibold px-2.5 py-0.5 rounded ${
+                product.stock > 0
+                  ? 'bg-green-100 dark:bg-green-950/40 text-green-600 dark:text-green-400'
+                  : 'bg-red-100 dark:bg-red-950/40 text-red-600'
+              }`}
+            >
               {product.stock > 0 ? `${product.stock} items remaining` : 'Out of stock'}
             </span>
           </div>
@@ -281,7 +318,9 @@ export const ItemDetail: React.FC = () => {
               </div>
 
               <button
-                onClick={handleAddToCart}
+                onClick={() => {
+                  void handleAddToCart();
+                }}
                 disabled={addingToCart}
                 className="flex-1 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold transition flex justify-center items-center gap-2 shadow-lg"
               >
@@ -299,9 +338,10 @@ export const ItemDetail: React.FC = () => {
           <HelpCircle className="text-purple-600" />
           <span>Product Advisor Q&A</span>
         </div>
-        
+
         <p className="text-xs text-gray-500">
-          Ask questions specifically about this product. The system will retrieve related facts and ingredients to respond.
+          Ask questions specifically about this product. The system will retrieve related facts and
+          ingredients to respond.
         </p>
 
         <form onSubmit={handleQaSubmit} className="flex gap-2">
@@ -322,14 +362,14 @@ export const ItemDetail: React.FC = () => {
         </form>
 
         {/* Answer view */}
-        {(qaLoading || qaAnswer) && (
+        {(qaLoading || (qaAnswer?.length ?? 0) > 0) && (
           <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-950/40 text-sm space-y-2 border border-gray-100 dark:border-gray-800">
             <div className="font-semibold text-xs text-purple-600 dark:text-purple-400 flex items-center gap-1.5">
               <MessageCircle size={14} />
               <span>Advisor Response</span>
             </div>
-            
-            {qaLoading && !qaAnswer ? (
+
+            {qaLoading && (qaAnswer?.length ?? 0) === 0 ? (
               <div className="flex gap-1 py-1">
                 <span className="w-1.5 h-1.5 bg-purple-600 rounded-full animate-bounce"></span>
                 <span className="w-1.5 h-1.5 bg-purple-600 rounded-full animate-bounce [animation-delay:0.2s]"></span>
@@ -376,7 +416,9 @@ export const ItemDetail: React.FC = () => {
 
           {/* Star breakdown counts */}
           <div className="flex-1 w-full">
-            <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Rating Breakdown</h4>
+            <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
+              Rating Breakdown
+            </h4>
             {renderStarBreakdown()}
           </div>
         </div>
@@ -384,12 +426,14 @@ export const ItemDetail: React.FC = () => {
         {/* Reviews List */}
         <div className="space-y-4 pt-4 border-t dark:border-gray-800">
           <div className="flex justify-between items-center">
-            <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">User Comments & Reviews</h4>
+            <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+              User Comments & Reviews
+            </h4>
             {!showAllReviews && reviewsMeta.total_count > 3 && (
               <button
                 onClick={() => {
                   setShowAllReviews(true);
-                  fetchReviews(1, false);
+                  void fetchReviews(1, false);
                 }}
                 className="text-xs font-bold text-purple-600 hover:text-purple-700 uppercase"
               >
@@ -399,9 +443,7 @@ export const ItemDetail: React.FC = () => {
           </div>
 
           <div
-            className={`space-y-4 ${
-              showAllReviews ? 'max-h-[300px] overflow-y-auto pr-2' : ''
-            }`}
+            className={`space-y-4 ${showAllReviews ? 'max-h-[300px] overflow-y-auto pr-2' : ''}`}
             onScroll={(e) => {
               if (!showAllReviews) return;
               const target = e.currentTarget;
@@ -411,18 +453,23 @@ export const ItemDetail: React.FC = () => {
               }
             }}
           >
-            {(showAllReviews ? reviews : reviews.slice(0, 3)).map((rev, idx) => (
-              <div key={idx} className="p-4 border dark:border-gray-800 rounded-xl bg-gray-50/50 dark:bg-gray-950/20 space-y-2 text-xs">
+            {(showAllReviews ? reviews : reviews.slice(0, 3)).map((rev) => (
+              <div
+                key={`${rev.created_at}-${rev.user_name ?? 'unknown'}`}
+                className="p-4 border dark:border-gray-800 rounded-xl bg-gray-50/50 dark:bg-gray-950/20 space-y-2 text-xs"
+              >
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-gray-800 dark:text-gray-200">{rev.user_name}</span>
+                    <span className="font-bold text-gray-800 dark:text-gray-200">
+                      {rev.user_name}
+                    </span>
                     <div className="flex gap-0.5">
                       {[1, 2, 3, 4, 5].map((star) => (
                         <Star
                           key={star}
                           size={10}
                           className={
-                            star <= rev.stars
+                            star <= (rev.stars ?? 0)
                               ? 'fill-amber-400 text-amber-400'
                               : 'text-gray-300 dark:text-gray-700'
                           }
@@ -435,13 +482,17 @@ export const ItemDetail: React.FC = () => {
                   </span>
                 </div>
                 <p className="text-gray-600 dark:text-gray-300 leading-relaxed font-medium">
-                  {rev.comment || 'No comment left'}
+                  {typeof rev.comment === 'string' && rev.comment.trim().length > 0
+                    ? rev.comment
+                    : 'No comment left'}
                 </p>
               </div>
             ))}
 
             {reviews.length === 0 && (
-              <p className="text-xs text-gray-400 py-4 text-center">No reviews left for this product yet.</p>
+              <p className="text-xs text-gray-400 py-4 text-center">
+                No reviews left for this product yet.
+              </p>
             )}
 
             {loadingReviews && (
@@ -454,10 +505,12 @@ export const ItemDetail: React.FC = () => {
       </div>
 
       <CustomDialog
-        isOpen={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        title={dialogTitle}
-        message={dialogMessage}
+        {...{
+          isOpen: dialogOpen,
+          onClose: () => setDialogOpen(false),
+          title: dialogTitle,
+          message: dialogMessage,
+        }}
       />
     </div>
   );

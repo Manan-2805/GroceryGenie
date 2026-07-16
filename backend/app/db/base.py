@@ -1,7 +1,7 @@
 import datetime
 import uuid
 
-from sqlalchemy import DateTime, MetaData
+from sqlalchemy import DateTime, MetaData, String, Text
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -32,6 +32,10 @@ class Base(AsyncAttrs, DeclarativeBase):
         default=datetime.datetime.utcnow,
         onupdate=datetime.datetime.utcnow,
     )
+    updated_by: Mapped[str] = mapped_column(
+        String(255), default="system", nullable=False
+    )
+    action_taken: Mapped[str] = mapped_column(Text, default="action", nullable=False)
 
 
 # Async database engine and session maker

@@ -1,8 +1,15 @@
 import { ShoppingBag, Clock, MapPin, Star, Eye } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
 import { DataTable, Column } from '../components/DataTable';
 import { orderService, api, Order } from '../services/api';
+
+type RatingState = {
+  stars: number;
+  comment: string;
+  submitted: boolean;
+  error: string | null;
+};
 
 export const Orders: React.FC = () => {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -11,25 +18,28 @@ export const Orders: React.FC = () => {
   const [orderDetails, setOrderDetails] = useState<Record<string, Order>>({});
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  
-  // Rating states (keyed by "orderId:productId")
-  const [ratings, setRatings] = useState<Record<string, { stars: number; comment: string; submitted: boolean; error: string | null }>>({});
 
-  const fetchOrders = async (pageNum: number = page) => {
-    try {
-      const data = await orderService.list(pageNum, 10);
-      setOrders(data.items);
-      setTotalPages(data.pages);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Rating states (keyed by "orderId:productId")
+  const [ratings, setRatings] = useState<Record<string, RatingState>>({});
+
+  const fetchOrders = useCallback(
+    async (pageNum: number = page) => {
+      try {
+        const data = await orderService.list(pageNum, 10);
+        setOrders(data.items);
+        setTotalPages(data.pages);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [page]
+  );
 
   useEffect(() => {
-    fetchOrders();
-  }, [page]);
+    void fetchOrders(page);
+  }, [fetchOrders, page]);
 
   const handleSelectOrder = async (orderId: string) => {
     setSelectedOrderId(orderId);
@@ -37,16 +47,17 @@ export const Orders: React.FC = () => {
       try {
         const detail = await orderService.get(orderId);
         setOrderDetails((prev) => ({ ...prev, [orderId]: detail }));
-        
+
         // Populate existing ratings from the backend order detail payload
         detail.items.forEach((item) => {
-          if (item.rating) {
+          const rating = item.rating;
+          if (rating !== null && rating !== undefined) {
             const key = `${orderId}:${item.product_id}`;
             setRatings((prev) => ({
               ...prev,
               [key]: {
-                stars: item.rating.stars,
-                comment: item.rating.comment || '',
+                stars: rating.stars,
+                comment: rating.comment ?? '',
                 submitted: true,
                 error: null,
               },
@@ -79,13 +90,18 @@ export const Orders: React.FC = () => {
           [key]: { ...existing, submitted: true, error: null },
         };
       });
-    } catch (err: any) {
-      console.error(err);
+    } catch (error: unknown) {
+      console.error(error);
+      const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data
+        ?.detail;
       setRatings((prev) => {
         const existing = prev[key] || { stars: 0, comment: '', submitted: false, error: null };
         return {
           ...prev,
-          [key]: { ...existing, error: err.response?.data?.detail || 'Failed to submit rating.' },
+          [key]: {
+            ...existing,
+            error: typeof detail === 'string' ? detail : 'Failed to submit rating.',
+          },
         };
       });
     }
@@ -97,7 +113,7 @@ export const Orders: React.FC = () => {
       ...prev,
       [key]: {
         stars,
-        comment: prev[key]?.comment || '',
+        comment: prev[key]?.comment ?? '',
         submitted: false,
         error: null,
       },
@@ -109,7 +125,7 @@ export const Orders: React.FC = () => {
     setRatings((prev) => ({
       ...prev,
       [key]: {
-        stars: prev[key]?.stars || 0,
+        stars: prev[key]?.stars ?? 0,
         comment,
         submitted: false,
         error: null,
@@ -138,10 +154,22 @@ export const Orders: React.FC = () => {
     const currentIndex = steps.indexOf(currentStatus);
 
     const stepTimestamps: Record<string, string | null> = {
-      placed: order.created_at ? new Date(order.created_at).toLocaleString() : null,
-      packed: order.packed_at ? new Date(order.packed_at).toLocaleString() : null,
-      out_for_delivery: order.out_for_delivery_at ? new Date(order.out_for_delivery_at).toLocaleString() : null,
-      delivered: order.delivered_at ? new Date(order.delivered_at).toLocaleString() : null,
+      placed:
+        typeof order.created_at === 'string' && order.created_at.length > 0
+          ? new Date(order.created_at).toLocaleString()
+          : null,
+      packed:
+        typeof order.packed_at === 'string' && order.packed_at.length > 0
+          ? new Date(order.packed_at).toLocaleString()
+          : null,
+      out_for_delivery:
+        typeof order.out_for_delivery_at === 'string' && order.out_for_delivery_at.length > 0
+          ? new Date(order.out_for_delivery_at).toLocaleString()
+          : null,
+      delivered:
+        typeof order.delivered_at === 'string' && order.delivered_at.length > 0
+          ? new Date(order.delivered_at).toLocaleString()
+          : null,
     };
 
     return (
@@ -170,10 +198,12 @@ export const Orders: React.FC = () => {
                   {isCompleted ? '✓' : idx + 1}
                 </div>
                 <div className="text-left md:text-center">
-                  <p className={`text-xs font-bold uppercase tracking-wider ${isActive ? 'text-purple-600' : 'text-gray-400'}`}>
+                  <p
+                    className={`text-xs font-bold uppercase tracking-wider ${isActive ? 'text-purple-600' : 'text-gray-400'}`}
+                  >
                     {stepLabels[step]}
                   </p>
-                  {timeStr ? (
+                  {timeStr !== null ? (
                     <p className="text-[10px] text-gray-500 font-semibold mt-0.5">{timeStr}</p>
                   ) : (
                     <p className="text-[10px] text-gray-400 italic mt-0.5">Pending</p>
@@ -194,7 +224,9 @@ export const Orders: React.FC = () => {
       header: 'Order ID',
       sortable: true,
       filterable: true,
-      render: (val) => <span className="font-mono text-xs font-bold">{String(val).slice(0, 8)}...</span>,
+      render: (val) => (
+        <span className="font-mono text-xs font-bold">{String(val).slice(0, 8)}...</span>
+      ),
     },
     {
       key: 'created_at',
@@ -203,7 +235,7 @@ export const Orders: React.FC = () => {
       render: (val) => (
         <span className="flex items-center gap-1 text-xs">
           <Clock size={12} className="text-gray-400" />
-          {new Date(val).toLocaleString()}
+          {new Date(String(val)).toLocaleString()}
         </span>
       ),
     },
@@ -211,7 +243,11 @@ export const Orders: React.FC = () => {
       key: 'total',
       header: 'Total Value',
       sortable: true,
-      render: (val) => <span className="font-bold text-purple-600 dark:text-purple-400">€{Number(val).toFixed(2)}</span>,
+      render: (val) => (
+        <span className="font-bold text-purple-600 dark:text-purple-400">
+          €{Number(val).toFixed(2)}
+        </span>
+      ),
     },
     {
       key: 'status',
@@ -221,7 +257,9 @@ export const Orders: React.FC = () => {
       filterType: 'select',
       filterOptions: ['placed', 'packed', 'out_for_delivery', 'delivered'],
       render: (val) => (
-        <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase ${getStatusColor(val)}`}>
+        <span
+          className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase ${getStatusColor(String(val))}`}
+        >
           {String(val).replace(/_/g, ' ')}
         </span>
       ),
@@ -250,7 +288,7 @@ export const Orders: React.FC = () => {
   }
 
   const selectedOrder = orders.find((o) => o.id === selectedOrderId);
-  const selectedDetails = selectedOrderId ? orderDetails[selectedOrderId] : null;
+  const selectedDetails = selectedOrderId !== null ? (orderDetails[selectedOrderId] ?? null) : null;
 
   return (
     <div className="max-w-6xl mx-auto py-8 px-4 space-y-8 text-left">
@@ -303,7 +341,10 @@ export const Orders: React.FC = () => {
               <div className="flex flex-wrap justify-between items-center gap-4 border-b border-gray-200 dark:border-gray-800 pb-4">
                 <div>
                   <h3 className="text-lg font-extrabold text-gray-800 dark:text-gray-200">
-                    Order Details <span className="font-mono text-purple-600 dark:text-purple-400">#{selectedOrder.id.slice(0, 8)}</span>
+                    Order Details{' '}
+                    <span className="font-mono text-purple-600 dark:text-purple-400">
+                      #{selectedOrder.id.slice(0, 8)}
+                    </span>
                   </h3>
                   <p className="text-xs text-gray-400 font-semibold flex items-center gap-1.5 mt-1">
                     <Clock size={12} />
@@ -311,7 +352,9 @@ export const Orders: React.FC = () => {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className={`text-xs font-bold px-3 py-1 rounded-full uppercase ${getStatusColor(selectedOrder.status)}`}>
+                  <span
+                    className={`text-xs font-bold px-3 py-1 rounded-full uppercase ${getStatusColor(selectedOrder.status)}`}
+                  >
                     {selectedOrder.status.replace(/_/g, ' ')}
                   </span>
                 </div>
@@ -319,31 +362,47 @@ export const Orders: React.FC = () => {
 
               {/* Status Timeline */}
               <div className="space-y-2 p-4 border dark:border-gray-900 rounded-xl bg-white dark:bg-gray-950/40">
-                <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Delivery Timeline & Status Change Times</h4>
+                <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                  Delivery Timeline & Status Change Times
+                </h4>
                 {renderTimeline(selectedOrder)}
               </div>
 
               {/* Delivery Address Details */}
-              {selectedDetails && selectedDetails.delivery_address && (
+              {selectedDetails !== null && selectedDetails.delivery_address !== null && (
                 <div className="space-y-2 p-4 border dark:border-gray-900 rounded-xl bg-white dark:bg-gray-950/40">
                   <div className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 uppercase">
                     <MapPin size={12} />
-                    <span>Delivery Address: {selectedDetails.delivery_address.label || 'Home'}</span>
+                    <span>
+                      Delivery Address:{' '}
+                      {typeof selectedDetails.delivery_address.label === 'string' &&
+                      selectedDetails.delivery_address.label.trim().length > 0
+                        ? selectedDetails.delivery_address.label
+                        : 'Home'}
+                    </span>
                   </div>
                   <p className="text-xs text-gray-800 dark:text-gray-300 font-medium">
-                    {selectedDetails.delivery_address.line1}
-                    {selectedDetails.delivery_address.line2 ? `, ${selectedDetails.delivery_address.line2}` : ''}
+                    {String(selectedDetails.delivery_address.line1 ?? '')}
+                    {typeof selectedDetails.delivery_address.line2 === 'string' &&
+                    selectedDetails.delivery_address.line2.trim().length > 0
+                      ? `, ${selectedDetails.delivery_address.line2}`
+                      : ''}
                   </p>
                   <p className="text-[10px] text-gray-400">
-                    {selectedDetails.delivery_address.city}, {selectedDetails.delivery_address.state} - {selectedDetails.delivery_address.postal_code}, {selectedDetails.delivery_address.country}
+                    {String(selectedDetails.delivery_address.city ?? '')},{' '}
+                    {String(selectedDetails.delivery_address.state ?? '')} -{' '}
+                    {String(selectedDetails.delivery_address.postal_code ?? '')},{' '}
+                    {String(selectedDetails.delivery_address.country ?? '')}
                   </p>
                 </div>
               )}
 
               {/* Items Breakdown */}
               <div className="space-y-3">
-                <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Ordered Items & Review Ratings</h4>
-                
+                <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                  Ordered Items & Review Ratings
+                </h4>
+
                 {!selectedDetails ? (
                   <div className="text-xs text-gray-400 text-center py-4">Loading items...</div>
                 ) : (
@@ -351,21 +410,37 @@ export const Orders: React.FC = () => {
                     {selectedDetails.items.map((item) => {
                       const isDelivered = selectedOrder.status === 'delivered';
                       const key = `${selectedOrder.id}:${item.product_id}`;
-                      const ratingState = ratings[key] || { stars: 0, comment: '', submitted: false, error: null };
+                      const ratingState = ratings[key] ?? {
+                        stars: 0,
+                        comment: '',
+                        submitted: false,
+                        error: null,
+                      };
 
                       return (
-                        <div key={item.id} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div
+                          key={item.id}
+                          className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4"
+                        >
                           <div className="flex items-center gap-3">
-                            {item.product?.image_url ? (
-                              <img src={item.product.image_url} alt={item.product.name} className="w-10 h-10 rounded-lg object-cover" />
+                            {typeof item.product?.image_url === 'string' &&
+                            item.product.image_url.trim().length > 0 ? (
+                              <img
+                                src={item.product.image_url}
+                                alt={item.product.name}
+                                className="w-10 h-10 rounded-lg object-cover"
+                              />
                             ) : (
                               <div className="w-10 h-10 rounded-lg bg-purple-100 dark:bg-purple-900/20 flex items-center justify-center font-bold text-purple-600">
-                                {item.product?.name?.slice(0, 1) || 'P'}
+                                {item.product?.name?.slice(0, 1) ?? 'P'}
                               </div>
                             )}
                             <div>
                               <p className="font-bold text-xs text-gray-800 dark:text-gray-200">
-                                {item.product?.name || 'Unknown Product'}
+                                {typeof item.product?.name === 'string' &&
+                                item.product.name.trim().length > 0
+                                  ? item.product.name
+                                  : 'Unknown Product'}
                               </p>
                               <p className="text-[10px] text-gray-500 font-semibold">
                                 €{item.price_at_purchase.toFixed(2)} × {item.quantity}
@@ -379,60 +454,83 @@ export const Orders: React.FC = () => {
                             </span>
 
                             {/* Ratings Section for Delivered Orders */}
-                            {isDelivered && item.product_id && (
-                              <div className="border-t md:border-t-0 md:pt-0 pt-2 flex flex-col md:items-end gap-1.5 mt-1">
-                                {ratingState.submitted ? (
-                                  <span className="text-[10px] font-bold text-green-600 dark:text-green-400 flex items-center gap-1">
-                                    ✓ Rated {ratingState.stars} Stars
-                                  </span>
-                                ) : (
-                                  <div className="space-y-1.5 max-w-xs text-left md:text-right">
-                                    <div className="flex items-center md:justify-end gap-1">
-                                      <span className="text-[9px] font-bold text-gray-400 mr-1 uppercase">Rate:</span>
-                                      {[1, 2, 3, 4, 5].map((star) => (
-                                        <button
-                                          key={star}
-                                          type="button"
-                                          onClick={() => handleStarClick(selectedOrder.id, item.product_id!, star)}
-                                          className="focus:outline-none"
-                                        >
-                                          <Star
-                                            size={14}
-                                            className={
-                                              star <= ratingState.stars
-                                                ? 'fill-amber-400 text-amber-400'
-                                                : 'text-gray-300 dark:text-gray-700'
+                            {isDelivered &&
+                              typeof item.product_id === 'string' &&
+                              item.product_id.length > 0 && (
+                                <div className="border-t md:border-t-0 md:pt-0 pt-2 flex flex-col md:items-end gap-1.5 mt-1">
+                                  {ratingState.submitted ? (
+                                    <span className="text-[10px] font-bold text-green-600 dark:text-green-400 flex items-center gap-1">
+                                      ✓ Rated {ratingState.stars} Stars
+                                    </span>
+                                  ) : (
+                                    <div className="space-y-1.5 max-w-xs text-left md:text-right">
+                                      <div className="flex items-center md:justify-end gap-1">
+                                        <span className="text-[9px] font-bold text-gray-400 mr-1 uppercase">
+                                          Rate:
+                                        </span>
+                                        {[1, 2, 3, 4, 5].map((star) => (
+                                          <button
+                                            key={star}
+                                            type="button"
+                                            onClick={() =>
+                                              handleStarClick(
+                                                selectedOrder.id,
+                                                item.product_id ?? '',
+                                                star
+                                              )
                                             }
-                                          />
-                                        </button>
-                                      ))}
-                                    </div>
-                                    
-                                    {ratingState.stars > 0 && (
-                                      <div className="flex flex-col gap-1 items-end">
-                                        <input
-                                          type="text"
-                                          placeholder="Add comments (optional)"
-                                          value={ratingState.comment}
-                                          onChange={(e) => handleCommentChange(selectedOrder.id, item.product_id!, e.target.value)}
-                                          className="w-48 px-2 py-0.5 border dark:border-gray-800 bg-transparent rounded text-[10px] focus:outline-none"
-                                        />
-                                        <button
-                                          onClick={() => handleRatingSubmit(selectedOrder.id, item.product_id!)}
-                                          className="px-2 py-0.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-[9px] font-bold"
-                                        >
-                                          Submit Review
-                                        </button>
+                                            className="focus:outline-none"
+                                          >
+                                            <Star
+                                              size={14}
+                                              className={
+                                                star <= ratingState.stars
+                                                  ? 'fill-amber-400 text-amber-400'
+                                                  : 'text-gray-300 dark:text-gray-700'
+                                              }
+                                            />
+                                          </button>
+                                        ))}
                                       </div>
-                                    )}
 
-                                    {ratingState.error && (
-                                      <p className="text-[9px] text-red-500 font-medium">{ratingState.error}</p>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            )}
+                                      {ratingState.stars > 0 && (
+                                        <div className="flex flex-col gap-1 items-end">
+                                          <input
+                                            type="text"
+                                            placeholder="Add comments (optional)"
+                                            value={ratingState.comment}
+                                            onChange={(e) =>
+                                              handleCommentChange(
+                                                selectedOrder.id,
+                                                item.product_id ?? '',
+                                                e.target.value
+                                              )
+                                            }
+                                            className="w-48 px-2 py-0.5 border dark:border-gray-800 bg-transparent rounded text-[10px] focus:outline-none"
+                                          />
+                                          <button
+                                            onClick={() => {
+                                              void handleRatingSubmit(
+                                                selectedOrder.id,
+                                                item.product_id ?? ''
+                                              );
+                                            }}
+                                            className="px-2 py-0.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-[9px] font-bold"
+                                          >
+                                            Submit Review
+                                          </button>
+                                        </div>
+                                      )}
+
+                                      {ratingState.error !== null && (
+                                        <p className="text-[9px] text-red-500 font-medium">
+                                          {ratingState.error}
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                           </div>
                         </div>
                       );

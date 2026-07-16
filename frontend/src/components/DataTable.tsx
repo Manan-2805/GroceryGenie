@@ -1,5 +1,5 @@
 import { ChevronUp, ChevronDown, Download } from 'lucide-react';
-import React, { useState, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 
 export type Column<T> = {
   key: string;
@@ -8,9 +8,9 @@ export type Column<T> = {
   filterable?: boolean;
   filterType?: 'text' | 'select';
   filterOptions?: string[];
-  render?: (value: any, item: T) => React.ReactNode;
+  render?: (value: unknown, item: T) => React.ReactNode;
   maxWidth?: string;
-}
+};
 
 type DataTableProps<T> = {
   columns: Column<T>[];
@@ -18,9 +18,17 @@ type DataTableProps<T> = {
   noDataMessage?: string;
   maxHeight?: string;
   exportFileName?: string;
+};
+
+function createRowKey<T extends Record<string, unknown>>(item: T, rowIndex: number): string {
+  const maybeId = item.id;
+  if (typeof maybeId === 'string' && maybeId.trim().length > 0) {
+    return maybeId;
+  }
+  return `${rowIndex}-${JSON.stringify(item)}`;
 }
 
-export function DataTable<T extends Record<string, any>>({
+export function DataTable<T extends Record<string, unknown>>({
   columns,
   data,
   noDataMessage = 'No data available',
@@ -31,19 +39,26 @@ export function DataTable<T extends Record<string, any>>({
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [filters, setFilters] = useState<Record<string, string>>({});
 
-  // Get distinct select options for columns that are select filterable and don't specify options
   const autoFilterOptions = useMemo(() => {
     const optionsMap: Record<string, string[]> = {};
     columns.forEach((col) => {
-      if (col.filterable && col.filterType === 'select' && !col.filterOptions) {
-        const values = data.map((item) => String(item[col.key] ?? '')).filter(Boolean);
+      if (
+        col.filterable === true &&
+        col.filterType === 'select' &&
+        col.filterOptions === undefined
+      ) {
+        const values = data
+          .map((item) => {
+            const value = item[col.key];
+            return typeof value === 'string' && value.trim().length > 0 ? value : '';
+          })
+          .filter((value): value is string => value.length > 0);
         optionsMap[col.key] = Array.from(new Set(values));
       }
     });
     return optionsMap;
   }, [columns, data]);
 
-  // Handle sort toggle
   const handleSort = (key: string) => {
     if (sortKey === key) {
       if (sortDir === 'asc') {
@@ -57,11 +72,10 @@ export function DataTable<T extends Record<string, any>>({
     }
   };
 
-  // Handle filter change
   const handleFilterChange = (key: string, value: string) => {
     setFilters((prev) => {
       const next = { ...prev };
-      if (!value) {
+      if (value.trim().length === 0) {
         delete next[key];
       } else {
         next[key] = value;
@@ -70,17 +84,23 @@ export function DataTable<T extends Record<string, any>>({
     });
   };
 
-  // Filtered and sorted data
+  const handleSortClick: React.MouseEventHandler<HTMLDivElement> = (event) => {
+    const key = event.currentTarget.dataset.sortKey;
+    if (typeof key === 'string') {
+      handleSort(key);
+    }
+  };
+
   const processedData = useMemo(() => {
     let result = [...data];
 
-    // Apply filters
     Object.entries(filters).forEach(([key, filterValue]) => {
-      const col = columns.find((c) => c.key === key);
+      const col = columns.find((candidate) => candidate.key === key);
       const isSelect = col?.filterType === 'select';
 
       result = result.filter((item) => {
-        const val = String(item[key] ?? '').toLowerCase();
+        const value = item[key];
+        const val = String(value ?? '').toLowerCase();
         const fVal = filterValue.toLowerCase();
         if (isSelect) {
           return val === fVal;
@@ -89,21 +109,21 @@ export function DataTable<T extends Record<string, any>>({
       });
     });
 
-    // Apply sort
-    if (sortKey) {
+    if (sortKey !== null) {
       result.sort((a, b) => {
-        let valA = a[sortKey];
-        let valB = b[sortKey];
+        const rawA = a[sortKey];
+        const rawB = b[sortKey];
+        const numA = typeof rawA === 'number' ? rawA : Number(rawA);
+        const numB = typeof rawB === 'number' ? rawB : Number(rawB);
 
-        // Handle numeric conversion if possible
-        const numA = Number(valA);
-        const numB = Number(valB);
-        if (!isNaN(numA) && !isNaN(numB)) {
+        let valA: string | number;
+        let valB: string | number;
+        if (Number.isFinite(numA) && Number.isFinite(numB)) {
           valA = numA;
           valB = numB;
         } else {
-          valA = String(valA ?? '').toLowerCase();
-          valB = String(valB ?? '').toLowerCase();
+          valA = String(rawA ?? '').toLowerCase();
+          valB = String(rawB ?? '').toLowerCase();
         }
 
         if (valA < valB) return sortDir === 'asc' ? -1 : 1;
@@ -113,21 +133,17 @@ export function DataTable<T extends Record<string, any>>({
     }
 
     return result;
-  }, [data, filters, sortKey, sortDir, columns]);
+  }, [columns, data, filters, sortDir, sortKey]);
 
-  // Export to CSV
   const handleExportCSV = () => {
     if (processedData.length === 0) return;
 
-    // Header row
     const headers = columns.map((col) => `"${col.header.replace(/"/g, '""')}"`).join(',');
 
-    // Data rows
     const rows = processedData.map((item) => {
       return columns
         .map((col) => {
           let val = item[col.key];
-          // If complex object or array, stringify
           if (typeof val === 'object' && val !== null) {
             val = JSON.stringify(val);
           }
@@ -149,7 +165,6 @@ export function DataTable<T extends Record<string, any>>({
 
   return (
     <div className="w-full flex flex-col bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden shadow-sm">
-      {/* Top action bar */}
       <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center gap-4 bg-gray-50 dark:bg-gray-900/50">
         <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
           Showing {processedData.length} of {data.length} entries
@@ -164,7 +179,6 @@ export function DataTable<T extends Record<string, any>>({
         </button>
       </div>
 
-      {/* Responsive Table container with fixed size and internal scroll */}
       <div className={`w-full overflow-x-auto overflow-y-auto ${maxHeight}`}>
         <table className="w-full text-left border-collapse min-w-[600px]">
           <thead>
@@ -174,12 +188,15 @@ export function DataTable<T extends Record<string, any>>({
                   <div className="flex flex-col gap-2">
                     <div
                       className={`flex items-center gap-1.5 ${
-                        col.sortable ? 'cursor-pointer hover:text-gray-950 dark:hover:text-white' : ''
+                        col.sortable === true
+                          ? 'cursor-pointer hover:text-gray-950 dark:hover:text-white'
+                          : ''
                       }`}
-                      onClick={() => col.sortable && handleSort(col.key)}
+                      data-sort-key={col.key}
+                      onClick={col.sortable === true ? handleSortClick : undefined}
                     >
                       <span>{col.header}</span>
-                      {col.sortable && (
+                      {col.sortable === true && (
                         <span className="text-gray-400">
                           {sortKey === col.key ? (
                             sortDir === 'asc' ? (
@@ -194,28 +211,29 @@ export function DataTable<T extends Record<string, any>>({
                       )}
                     </div>
 
-                    {/* Inline filters */}
-                    {col.filterable && (
-                      <div onClick={(e) => e.stopPropagation()}>
+                    {col.filterable === true && (
+                      <div onClick={(event) => event.stopPropagation()}>
                         {col.filterType === 'select' ? (
                           <select
-                            value={filters[col.key] || ''}
-                            onChange={(e) => handleFilterChange(col.key, e.target.value)}
+                            value={typeof filters[col.key] === 'string' ? filters[col.key] : ''}
+                            onChange={(event) => handleFilterChange(col.key, event.target.value)}
                             className="w-full px-2 py-1 bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded text-[11px] font-medium text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-purple-600"
                           >
                             <option value="">All</option>
-                            {(col.filterOptions || autoFilterOptions[col.key] || []).map((opt) => (
-                              <option key={opt} value={opt}>
-                                {opt}
-                              </option>
-                            ))}
+                            {(col.filterOptions ?? autoFilterOptions[col.key] ?? []).map(
+                              (option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              )
+                            )}
                           </select>
                         ) : (
                           <input
                             type="text"
                             placeholder="Filter..."
-                            value={filters[col.key] || ''}
-                            onChange={(e) => handleFilterChange(col.key, e.target.value)}
+                            value={typeof filters[col.key] === 'string' ? filters[col.key] : ''}
+                            onChange={(event) => handleFilterChange(col.key, event.target.value)}
                             className="w-full px-2 py-1 bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded text-[11px] font-medium text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-purple-600"
                           />
                         )}
@@ -229,17 +247,22 @@ export function DataTable<T extends Record<string, any>>({
           <tbody className="divide-y divide-gray-200 dark:divide-gray-800 text-sm">
             {processedData.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="p-8 text-center text-gray-500 dark:text-gray-400">
+                <td
+                  colSpan={columns.length}
+                  className="p-8 text-center text-gray-500 dark:text-gray-400"
+                >
                   <div className="flex flex-col items-center justify-center gap-2">
                     <span className="font-semibold">{noDataMessage}</span>
-                    <span className="text-xs opacity-75">Try clearing filters or check back later</span>
+                    <span className="text-xs opacity-75">
+                      Try clearing filters or check back later
+                    </span>
                   </div>
                 </td>
               </tr>
             ) : (
-              processedData.map((item, rowIdx) => (
+              processedData.map((item, rowIndex) => (
                 <tr
-                  key={item.id || rowIdx}
+                  key={createRowKey(item, rowIndex)}
                   className="hover:bg-gray-50/50 dark:hover:bg-gray-900/20 text-gray-700 dark:text-gray-300 transition"
                 >
                   {columns.map((col) => {
@@ -247,10 +270,12 @@ export function DataTable<T extends Record<string, any>>({
                     return (
                       <td key={col.key} className="p-4 align-middle">
                         <div
-                          className={`truncate ${col.maxWidth || 'max-w-[200px]'}`}
-                          title={typeof value === 'object' ? '' : String(value ?? '')}
+                          className={`truncate ${col.maxWidth ?? 'max-w-[200px]'}`}
+                          title={
+                            typeof value === 'object' && value !== null ? '' : String(value ?? '')
+                          }
                         >
-                          {col.render ? col.render(value, item) : String(value ?? '')}
+                          {col.render !== undefined ? col.render(value, item) : String(value ?? '')}
                         </div>
                       </td>
                     );
