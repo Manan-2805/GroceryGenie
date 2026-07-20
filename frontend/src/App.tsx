@@ -11,8 +11,8 @@ import {
   Navigate,
 } from 'react-router-dom';
 
-import { ChatBubble } from './components/ChatBubble';
 import { VoiceSessionProvider } from './contexts/VoiceSessionContext';
+import { Agent } from './pages/Agent';
 import { Cart } from './pages/Cart';
 import { Catalog } from './pages/Catalog';
 import { Checkout } from './pages/Checkout';
@@ -164,6 +164,9 @@ export const AppContent: React.FC = () => {
             </Link>
 
             <nav className="hidden md:flex items-center gap-6 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-450">
+              <Link to="/agent" className="hover:text-purple-600 transition">
+                Assistant
+              </Link>
               {user?.role === 'customer' && (
                 <Link to="/items" className="hover:text-purple-600 transition">
                   Catalog
@@ -279,13 +282,11 @@ export const AppContent: React.FC = () => {
             path="/analysis"
             element={user?.role === 'seller' ? <SellerAnalysis /> : <Navigate to="/items" />}
           />
+          <Route path="/agent" element={<Agent />} />
           <Route path="/maintenance" element={<Maintenance />} />
           <Route path="/error" element={<ErrorPage />} />
         </Routes>
       </main>
-
-      {/* Floating Chatbubble Overlay */}
-      <ChatBubble />
     </div>
   );
 };

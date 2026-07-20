@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 
@@ -16,6 +17,61 @@ os.environ["HF_HOME"] = str(MODELS_DIR / "huggingface")
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger("app.core.config")
+
+
+def detect_gpu_providers() -> list[str]:
+    """Auto-detect available GPU providers for ONNX Runtime.
+
+    Returns a list of ONNX execution providers in priority order.
+    On Windows with NVIDIA GPU: ['CUDAExecutionProvider', 'DmlExecutionProvider', 'CPUExecutionProvider']
+    On Linux with NVIDIA GPU: ['CUDAExecutionProvider', 'CPUExecutionProvider']
+    On systems without GPU: ['CPUExecutionProvider']
+    """
+    providers = []
+
+    # Check for CUDA via torch
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            providers.append("CUDAExecutionProvider")
+            gpu_name = torch.cuda.get_device_name(0)
+            logger.info(f"GPU detected via torch: {gpu_name}")
+    except ImportError:
+        logger.debug("torch not available, skipping CUDA check")
+    except Exception as e:
+        logger.debug(f"torch CUDA check failed: {e}")
+
+    # Check for DirectML on Windows
+    if os.name == "nt":
+        import importlib.util
+
+        if importlib.util.find_spec("onnxruntime") is not None:
+            providers.append("DmlExecutionProvider")
+            logger.info("DirectML provider available on Windows")
+        else:
+            logger.debug("onnxruntime-directml not available")
+
+    # Fallback to CPU
+    if not providers:
+        logger.info("No GPU detected, using CPU execution provider")
+        providers.append("CPUExecutionProvider")
+
+    return providers
+
+
+def detect_torch_device() -> str:
+    """Detect the best available torch device."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda"
+        return "cpu"
+    except ImportError:
+        return "cpu"
 
 
 class Settings(BaseSettings):
@@ -69,7 +125,7 @@ class Settings(BaseSettings):
             "PIPER_VOICE_CONFIG", str(MODELS_DIR / "en_US-lessac-medium.onnx.json")
         )
     )
-    ONNX_ASR_PROVIDERS: str = Field(default="CPUExecutionProvider")
+    ONNX_ASR_PROVIDERS: str = Field(default="")  # Empty = auto-detect
     PARAKEET_CHUNK_SECONDS: int = Field(default=5)
 
     # Embedding model config
@@ -86,6 +142,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_MINUTE: int = Field(default=60)
     ENV_MODE: str = Field(default="development")
 
+    # GPU config
+    USE_GPU: bool = Field(default=True)
+    CUDA_DEVICE: int = Field(default=0)
+
     @property
     def parsed_origins(self) -> list[str]:
         return [
@@ -96,9 +156,25 @@ class Settings(BaseSettings):
 
     @property
     def parsed_asr_providers(self) -> list[str]:
-        return [
-            prov.strip() for prov in self.ONNX_ASR_PROVIDERS.split(",") if prov.strip()
-        ]
+        """Returns ONNX execution providers for ASR.
+
+        If ONNX_ASR_PROVIDERS env var is set, parse it.
+        Otherwise, auto-detect GPU providers.
+        """
+        if self.ONNX_ASR_PROVIDERS:
+            return [
+                prov.strip()
+                for prov in self.ONNX_ASR_PROVIDERS.split(",")
+                if prov.strip()
+            ]
+        return detect_gpu_providers()
+
+    @property
+    def torch_device(self) -> str:
+        """Returns the best available torch device (cuda or cpu)."""
+        if not self.USE_GPU:
+            return "cpu"
+        return detect_torch_device()
 
 
 settings = Settings()

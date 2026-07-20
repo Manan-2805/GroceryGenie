@@ -11,6 +11,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.db.base import AsyncSessionFactory
+from app.db.models.address import Address
 from app.db.models.cart import CartItem
 from app.db.models.enums import OrderStatus, UserRole
 from app.db.models.order import Order, OrderItem
@@ -559,6 +560,237 @@ async def update_order_status(order_id: str, new_status: str, seller_id: str) ->
         order.status = status_enum
         await session.commit()
         return {"status": "success", "message": f"Order status updated to '{status_enum.value}'."}
+
+
+@mcp.tool()
+async def manage_address(
+    action: str,
+    user_id: str,
+    address_id: Optional[str] = None,
+    label: Optional[str] = None,
+    line1: Optional[str] = None,
+    line2: Optional[str] = None,
+    city: Optional[str] = None,
+    state: Optional[str] = None,
+    postal_code: Optional[str] = None,
+    country: Optional[str] = None,
+    is_default: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Manage saved addresses. Actions: list, create, update, delete."""
+    try:
+        uid = uuid.UUID(user_id)
+    except ValueError:
+        return {"status": "error", "message": "Invalid user ID"}
+
+    async with AsyncSessionFactory() as session:
+        if action == "list":
+            result = await session.execute(
+                select(Address).where(Address.user_id == uid).order_by(Address.is_default.desc())
+            )
+            addresses = result.scalars().all()
+            return {
+                "status": "success",
+                "addresses": [
+                    {
+                        "id": str(a.id),
+                        "label": a.label,
+                        "line1": a.line1,
+                        "city": a.city,
+                        "state": a.state,
+                        "postal_code": a.postal_code,
+                        "country": a.country,
+                        "is_default": a.is_default,
+                    }
+                    for a in addresses
+                ],
+            }
+
+        if action == "create":
+            if not label or not line1:
+                return {"status": "error", "message": "Label and line1 are required"}
+            
+            # Check if first address
+            count_res = await session.execute(select(Address).where(Address.user_id == uid))
+            is_first = len(count_res.scalars().all()) == 0
+            should_be_default = is_default or is_first
+
+            if should_be_default:
+                from sqlalchemy import update
+                await session.execute(
+                    update(Address).where(Address.user_id == uid).values(is_default=False)
+                )
+
+            address = Address(
+                user_id=uid,
+                label=label,
+                line1=line1,
+                line2=line2,
+                city=city or "",
+                state=state or "",
+                postal_code=postal_code or "",
+                country=country or "",
+                is_default=should_be_default,
+            )
+            session.add(address)
+            await session.commit()
+            await session.refresh(address)
+            return {"status": "success", "message": f"Address '{address.label}' created.", "id": str(address.id)}
+
+        if action in ("update", "delete"):
+            if not address_id:
+                return {"status": "error", "message": "Address ID required"}
+            try:
+                aid = uuid.UUID(address_id)
+            except ValueError:
+                return {"status": "error", "message": "Invalid address ID"}
+
+            result = await session.execute(
+                select(Address).where(Address.id == aid, Address.user_id == uid)
+            )
+            address = result.scalar_one_or_none()
+            if not address:
+                return {"status": "error", "message": "Address not found"}
+
+            if action == "delete":
+                await session.delete(address)
+                await session.commit()
+                return {"status": "success", "message": "Address deleted"}
+
+            # Update
+            if is_default:
+                from sqlalchemy import update
+                await session.execute(
+                    update(Address).where(Address.user_id == uid).values(is_default=False)
+                )
+            if label: address.label = label
+            if line1: address.line1 = line1
+            if line2 is not None: address.line2 = line2
+            if city: address.city = city
+            if state: address.state = state
+            if postal_code: address.postal_code = postal_code
+            if country: address.country = country
+            if is_default is not None: address.is_default = is_default
+            await session.commit()
+            return {"status": "success", "message": "Address updated"}
+
+        return {"status": "error", "message": f"Unknown action: {action}"}
+
+
+@mcp.tool()
+async def get_user_profile(user_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieve user profile information."""
+    try:
+        uid = uuid.UUID(user_id)
+    except ValueError:
+        return None
+
+    async with AsyncSessionFactory() as session:
+        result = await session.execute(select(User).where(User.id == uid))
+        user = result.scalar_one_or_none()
+        if not user:
+            return None
+
+        return {
+            "id": str(user.id),
+            "name": user.name,
+            "email": user.email,
+            "role": user.role.value,
+        }
+
+
+@mcp.tool()
+async def manage_seller_product(
+    action: str,
+    seller_id: str,
+    product_id: Optional[str] = None,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    category: Optional[str] = None,
+    price: Optional[float] = None,
+    stock: Optional[int] = None,
+) -> Dict[str, Any]:
+    """[SELLER ONLY] Manage seller products. Actions: list, create, update, deactivate."""
+    try:
+        sid = uuid.UUID(seller_id)
+    except ValueError:
+        return {"status": "error", "message": "Invalid seller ID"}
+
+    async with AsyncSessionFactory() as session:
+        # Verify seller role
+        u_result = await session.execute(select(User).where(User.id == sid))
+        user = u_result.scalar_one_or_none()
+        if not user or user.role != UserRole.seller:
+            return {"status": "error", "message": "Forbidden. Seller role required."}
+
+        if action == "list":
+            result = await session.execute(
+                select(Product).where(Product.seller_id == sid).order_by(Product.name.asc())
+            )
+            products = result.scalars().all()
+            return {
+                "status": "success",
+                "products": [
+                    {
+                        "id": str(p.id),
+                        "name": p.name,
+                        "category": p.category,
+                        "price": float(p.price),
+                        "stock": p.stock,
+                        "is_active": p.is_active,
+                    }
+                    for p in products
+                ],
+            }
+
+        if action == "create":
+            if not name or price is None:
+                return {"status": "error", "message": "Name and price are required"}
+            from decimal import Decimal
+            product = Product(
+                seller_id=sid,
+                name=name,
+                description=description or "",
+                category=category or "General",
+                price=Decimal(str(price)),
+                stock=stock or 0,
+            )
+            session.add(product)
+            await session.commit()
+            await session.refresh(product)
+            return {"status": "success", "message": f"Product '{product.name}' created.", "id": str(product.id)}
+
+        if action in ("update", "deactivate"):
+            if not product_id:
+                return {"status": "error", "message": "Product ID required"}
+            try:
+                pid = uuid.UUID(product_id)
+            except ValueError:
+                return {"status": "error", "message": "Invalid product ID"}
+
+            result = await session.execute(
+                select(Product).where(Product.id == pid, Product.seller_id == sid)
+            )
+            product = result.scalar_one_or_none()
+            if not product:
+                return {"status": "error", "message": "Product not found"}
+
+            if action == "deactivate":
+                product.is_active = False
+                await session.commit()
+                return {"status": "success", "message": f"Product '{product.name}' deactivated"}
+
+            # Update
+            if name: product.name = name
+            if description is not None: product.description = description
+            if category: product.category = category
+            if price is not None:
+                from decimal import Decimal
+                product.price = Decimal(str(price))
+            if stock is not None: product.stock = stock
+            await session.commit()
+            return {"status": "success", "message": f"Product '{product.name}' updated"}
+
+        return {"status": "error", "message": f"Unknown action: {action}"}
 
 
 if __name__ == "__main__":

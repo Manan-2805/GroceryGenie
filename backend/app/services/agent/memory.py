@@ -7,7 +7,7 @@ from sqlalchemy.future import select
 
 from app.db.models.enums import FactCategory
 from app.db.models.memory import PersistentFact
-from app.services.agent.llm import call_llm
+from app.services.agent.llm import call_llm, extract_json_from_response
 
 logger = logging.getLogger("app.services.agent.memory")
 
@@ -46,18 +46,11 @@ async def classify_and_store_fact(
             user_prompt=user_message,
             temperature=0.0,
             max_tokens=256,
+            call_type="fact_classifier",
         )
 
-        # Clean response if markdown blocks were output
-        cleaned_response = response_str.strip()
-        if cleaned_response.startswith("```"):
-            lines = cleaned_response.splitlines()
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].startswith("```"):
-                lines = lines[:-1]
-            cleaned_response = "\n".join(lines).strip()
-
+        # Use robust JSON extraction
+        cleaned_response = extract_json_from_response(response_str)
         data = json.loads(cleaned_response)
         if not data.get("has_fact"):
             return None

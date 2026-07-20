@@ -3,10 +3,10 @@ import contextlib
 import json
 import logging
 import uuid
+from typing import Any
 
 import numpy as np
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
-from pipecat.audio.vad.silero import SileroVADAnalyzer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db
@@ -24,14 +24,16 @@ logger = logging.getLogger("app.api.ws")
 # Audio properties
 SAMPLE_RATE = 16000
 BYTES_PER_SAMPLE = 2  # 16-bit
-VAD_THRESHOLD = 450.0  # RMS amplitude threshold for speech detection
+VAD_THRESHOLD = 500.0  # RMS amplitude threshold for speech detection (adjusted)
 MIN_SILENCE_DURATION = 1.2  # Seconds of silence to trigger end of speech turn
-MAX_SPEECH_DURATION = 8.0  # Max speech turn duration in seconds
+MAX_SPEECH_DURATION = 15.0  # Max speech turn duration in seconds
+HEARTBEAT_INTERVAL = 30.0  # Send ping every 30 seconds
+HEARTBEAT_TIMEOUT = 15.0  # Close connection if no pong within 15 seconds
 
 
 def calculate_rms(audio_chunk: bytes) -> float:
     """Calculates the RMS amplitude of a PCM 16-bit mono audio chunk."""
-    if not audio_chunk:
+    if not audio_chunk or len(audio_chunk) < 2:
         return 0.0
     audio_data = np.frombuffer(audio_chunk, dtype=np.int16)
     if len(audio_data) == 0:
@@ -49,7 +51,6 @@ async def voice_websocket_endpoint(
     # 1. Authenticate user from cookie or query param
     token = websocket.cookies.get("session_token")
     if not token:
-        # Fallback to query param
         token = websocket.query_params.get("token")
 
     if not token:
@@ -89,7 +90,6 @@ async def voice_websocket_endpoint(
             )
             return
     else:
-        # Create a new chat session
         chat_session = ChatSession(user_id=user.id, mode=ChatMode.voice)
         db.add(chat_session)
         await db.commit()
@@ -103,10 +103,6 @@ async def voice_websocket_endpoint(
         user_role=user.role,
     )
 
-    # Initialize VAD Analyzer
-    vad_analyzer = SileroVADAnalyzer(sample_rate=SAMPLE_RATE)
-    vad_analyzer.set_sample_rate(SAMPLE_RATE)
-
     # Initialize State Variables
     audio_buffer = bytearray()
     speech_buffer = bytearray()
@@ -114,8 +110,11 @@ async def voice_websocket_endpoint(
     speech_timer = 0.0
     is_speaking = False
     is_playing_response = False
+    last_pong_time = asyncio.get_event_loop().time()
+    barge_in_cooldown = 0.0  # Prevent echo after barge-in
+    vad_chunk_size = 1024  # 512 samples * 2 bytes per sample for VAD processing
 
-    # Task to stream synthesized voice back to client
+    # Voice output queue
     voice_output_queue: asyncio.Queue[bytes] = asyncio.Queue()
 
     # Send session initialized message
@@ -147,47 +146,86 @@ async def voice_websocket_endpoint(
         except Exception as e:
             logger.error(f"Error in voice sender task: {e}")
 
+    async def heartbeat_task() -> None:
+        """Sends periodic pings to keep connection alive and detect disconnection."""
+        nonlocal last_pong_time
+        try:
+            while True:
+                await asyncio.sleep(HEARTBEAT_INTERVAL)
+                try:
+                    await websocket.send_json({"type": "ping"})
+                    # Check if we've received a pong recently
+                    elapsed_since_pong = (
+                        asyncio.get_event_loop().time() - last_pong_time
+                    )
+                    if elapsed_since_pong > HEARTBEAT_TIMEOUT:
+                        logger.warning("Heartbeat timeout - no pong received")
+                        break
+                except Exception:
+                    break
+        except asyncio.CancelledError:
+            pass
+
     sender_task = asyncio.create_task(voice_sender_task())
+    heartbeat_task_handle = asyncio.create_task(heartbeat_task())
+
+    def stop_tts_playback() -> None:
+        """Clears the TTS output queue to stop playback immediately."""
+        nonlocal is_playing_response
+        while not voice_output_queue.empty():
+            try:
+                voice_output_queue.get_nowait()
+                voice_output_queue.task_done()
+            except asyncio.QueueEmpty:
+                break
+        is_playing_response = False
 
     try:
         while True:
-            # Receive frame (binary or text)
-            frame = await websocket.receive()
+            # Receive frame (binary or text) with timeout for heartbeat
+            frame = await asyncio.wait_for(
+                websocket.receive(), timeout=HEARTBEAT_INTERVAL + 5
+            )
 
             if "bytes" in frame:
                 audio_chunk = frame["bytes"]
                 audio_buffer.extend(audio_chunk)
 
-                # Process audio chunks in 512-sample (1024-byte) increments for Silero VAD
-                while len(audio_buffer) >= 1024:
-                    chunk_to_analyze = bytes(audio_buffer[:1024])
-                    del audio_buffer[:1024]
+                # Process audio chunks in 512-sample (1024-byte) increments for VAD
+                while len(audio_buffer) >= vad_chunk_size:
+                    chunk_to_analyze = bytes(audio_buffer[:vad_chunk_size])
+                    del audio_buffer[:vad_chunk_size]
 
-                    confidence = vad_analyzer.voice_confidence(chunk_to_analyze)
+                    # Use RMS-based VAD instead of Silero (avoids sample rate issues)
+                    rms = calculate_rms(chunk_to_analyze)
+                    is_voice = rms > VAD_THRESHOLD
 
-                    if confidence > 0.5:
+                    if is_voice:
                         # User is actively speaking
                         if not is_speaking:
                             is_speaking = True
                             speech_timer = 0.0
-                            logger.info("Speech onset detected (Silero VAD).")
+                            silence_timer = 0.0
+                            logger.debug(f"Speech onset detected (RMS={rms:.1f}).")
 
                             # Barge-in: User speaks while agent is playing TTS
                             if is_playing_response:
                                 logger.info("Barge-in detected! Stopping TTS playback.")
-                                while not voice_output_queue.empty():
-                                    try:
-                                        voice_output_queue.get_nowait()
-                                        voice_output_queue.task_done()
-                                    except asyncio.QueueEmpty:
-                                        break
-
-                                is_playing_response = False
+                                stop_tts_playback()
+                                # Send stop signal to frontend
                                 await websocket.send_json({"type": "stop_playback"})
+                                await websocket.send_bytes(
+                                    b""
+                                )  # Empty bytes = stop signal
+                                barge_in_cooldown = (
+                                    asyncio.get_event_loop().time() + 0.1
+                                )
 
                         speech_buffer.extend(chunk_to_analyze)
                         silence_timer = 0.0
-                        speech_timer += 512 / SAMPLE_RATE
+                        speech_timer += vad_chunk_size / (
+                            BYTES_PER_SAMPLE * SAMPLE_RATE
+                        )
 
                         if speech_timer > MAX_SPEECH_DURATION:
                             logger.info("Max speech duration reached. Processing...")
@@ -202,8 +240,9 @@ async def voice_websocket_endpoint(
 
                     elif is_speaking:
                         # User was speaking, now silent
-                        silence_timer += 512 / SAMPLE_RATE
-                        speech_buffer.extend(chunk_to_analyze)
+                        silence_timer += vad_chunk_size / (
+                            BYTES_PER_SAMPLE * SAMPLE_RATE
+                        )
 
                         if silence_timer > MIN_SILENCE_DURATION:
                             logger.info(
@@ -218,23 +257,32 @@ async def voice_websocket_endpoint(
                             )
                             speech_buffer.clear()
 
+                # Check barge-in cooldown
+                current_time = asyncio.get_event_loop().time()
+                if barge_in_cooldown > 0 and current_time < barge_in_cooldown:
+                    continue
+
             elif "text" in frame:
                 # Handle control messages
                 data = json.loads(frame["text"])
-                if data.get("type") == "end_session":
+                msg_type = data.get("type", "")
+
+                if msg_type == "end_session":
                     break
-                if data.get("type") == "permission_response":
-                    # User approved/denied a cart/checkout action from the voice chat bubble
+
+                if msg_type == "pong":
+                    last_pong_time = asyncio.get_event_loop().time()
+                    continue
+
+                if msg_type == "permission_response":
                     approved = data.get("approved")
                     action = data.get("action")
                     payload = data.get("payload")
 
                     if approved and action and payload:
-                        # Execute the approved mutation
                         res = await orchestrator.execute_approved_mutation(
                             action, payload
                         )
-                        # Synthesize response
                         text = res.get("text", "Done.")
                         await websocket.send_json(
                             {
@@ -249,15 +297,46 @@ async def voice_websocket_endpoint(
                             await voice_output_queue.put(pcm_chunk)
                         await voice_output_queue.put(b"EOF")
 
+                # Handle option response from frontend
+                if msg_type == "option_response":
+                    selected = data.get("selected", "")
+                    free_text = data.get("free_text", "")
+                    # Create a synthetic user message for the orchestrator
+                    synthetic_message = selected
+                    if free_text:
+                        synthetic_message += f" - {free_text}"
+
+                    # Process through orchestrator
+                    is_playing_response = True
+                    result = await orchestrator.run_turn(synthetic_message)
+                    await handle_orchestrator_result(
+                        result, orchestrator, websocket, voice_output_queue
+                    )
+
+                # Handle free input
+                if msg_type == "free_input":
+                    text_input = data.get("text", "")
+                    if text_input.strip():
+                        is_playing_response = True
+                        result = await orchestrator.run_turn(text_input.strip())
+                        await handle_orchestrator_result(
+                            result, orchestrator, websocket, voice_output_queue
+                        )
+
+    except TimeoutError:
+        logger.warning("WebSocket receive timeout - closing connection")
     except WebSocketDisconnect:
         logger.info("Voice WebSocket disconnected by client.")
     except Exception as e:
         logger.error(f"Error in Voice WebSocket connection: {e}")
     finally:
-        # Cancel sender task
+        # Cancel tasks
         sender_task.cancel()
+        heartbeat_task_handle.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await sender_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task_handle
 
         # Clean up database ChatSession ended_at
         try:
@@ -276,13 +355,98 @@ async def voice_websocket_endpoint(
         logger.info("Voice WebSocket connection cleaned up.")
 
 
+async def handle_orchestrator_result(
+    result: dict[str, Any],
+    _orchestrator: AgentOrchestrator,
+    websocket: WebSocket,
+    voice_output_queue: asyncio.Queue[bytes],
+) -> None:
+    """Handles the orchestrator result, sending appropriate messages and TTS."""
+    rtype = str(result["type"])
+
+    if rtype == "permission_request":
+        action = str(result.get("action", ""))
+        summary = str(result.get("summary", ""))
+        payload = result.get("payload", {})
+        await websocket.send_json(
+            {
+                "type": "permission_request",
+                "action": action,
+                "summary": summary,
+                "payload": payload,
+            }
+        )
+        await websocket.send_json({"type": "status", "status": "waiting_permission"})
+
+        warning_text = f"I need your permission to {summary}"
+        async for pcm_chunk in synthesize_text_to_pcm_stream(
+            warning_text, emotion="calm"
+        ):
+            await voice_output_queue.put(pcm_chunk)
+        await voice_output_queue.put(b"EOF")
+
+    elif rtype == "options_response":
+        text_val = str(result.get("text", ""))
+        options_val = result.get("options", [])
+        free_input_val = bool(result.get("free_input_allowed", True))
+        await websocket.send_json(
+            {
+                "type": "options_request",
+                "text": text_val,
+                "options": options_val,
+                "free_input_allowed": free_input_val,
+            }
+        )
+        async for pcm_chunk in synthesize_text_to_pcm_stream(
+            text_val, emotion="neutral"
+        ):
+            await voice_output_queue.put(pcm_chunk)
+        await voice_output_queue.put(b"EOF")
+
+    else:
+        text_val = str(result.get("text", ""))
+        nav_to = result.get("navigate_to")
+        nav_label = result.get("navigate_label")
+        options_val = result.get("options")
+        free_input_val = bool(result.get("free_input_allowed", False))
+
+        await websocket.send_json(
+            {
+                "type": "response",
+                "text": text_val,
+                "navigate_to": nav_to,
+                "navigate_label": nav_label,
+                "options": options_val,
+                "free_input_allowed": free_input_val,
+            }
+        )
+
+        emotion = "neutral"
+        if any(
+            word in text_val.lower()
+            for word in ["offer", "deal", "discount", "free", "cheaper"]
+        ):
+            emotion = "excited"
+        elif any(
+            word in text_val.lower()
+            for word in ["allergy", "warning", "contains", "peanut"]
+        ):
+            emotion = "calm"
+
+        async for pcm_chunk in synthesize_text_to_pcm_stream(text_val, emotion=emotion):
+            await voice_output_queue.put(pcm_chunk)
+        await voice_output_queue.put(b"EOF")
+
+        await websocket.send_json({"type": "status", "status": "idle"})
+
+
 async def process_audio_query(
     audio_data: bytes,
     orchestrator: AgentOrchestrator,
     websocket: WebSocket,
     voice_output_queue: asyncio.Queue[bytes],
 ) -> None:
-    """Processes the buffered audio: transcribes it, runs orchestrator, synthesizes TTS and streams output."""
+    """Processes the buffered audio: transcribes it, runs orchestrator, synthesizes TTS."""
     if len(audio_data) < 16000:  # Skip less than 0.5s audio
         return
 
@@ -309,63 +473,9 @@ async def process_audio_query(
     # 2. Run agent orchestrator turn
     try:
         result = await orchestrator.run_turn(transcript)
-
-        if result["type"] == "permission_request":
-            # Action needs user permission, send JSON control event to frontend
-            await websocket.send_json(
-                {
-                    "type": "permission_request",
-                    "action": result["action"],
-                    "summary": result["summary"],
-                    "payload": result["payload"],
-                }
-            )
-            await websocket.send_json(
-                {"type": "status", "status": "waiting_permission"}
-            )
-
-            # Synthesize warning voice message progressively
-            warning_text = f"I need your permission to {result['summary']}"
-            async for pcm_chunk in synthesize_text_to_pcm_stream(
-                warning_text, emotion="calm"
-            ):
-                await voice_output_queue.put(pcm_chunk)
-            await voice_output_queue.put(b"EOF")
-
-        else:
-            # Standard agent text response
-            text_response = result.get("text", "")
-
-            # Emit final text response
-            await websocket.send_json(
-                {
-                    "type": "response",
-                    "text": text_response,
-                    "navigate_to": result.get("navigate_to"),
-                    "navigate_label": result.get("navigate_label"),
-                }
-            )
-
-            # 3. Synthesize response voice output (TTS) progressively
-            emotion = "neutral"
-            if any(
-                word in text_response.lower()
-                for word in ["offer", "deal", "discount", "free", "cheaper"]
-            ):
-                emotion = "excited"
-            elif any(
-                word in text_response.lower()
-                for word in ["allergy", "warning", "contains", "peanut"]
-            ):
-                emotion = "calm"
-
-            async for pcm_chunk in synthesize_text_to_pcm_stream(
-                text_response, emotion=emotion
-            ):
-                await voice_output_queue.put(pcm_chunk)
-            await voice_output_queue.put(b"EOF")
-
-            await websocket.send_json({"type": "status", "status": "idle"})
+        await handle_orchestrator_result(
+            result, orchestrator, websocket, voice_output_queue
+        )
 
     except Exception as e:
         logger.error(f"Error processing agent voice turn: {e}")
@@ -375,4 +485,3 @@ async def process_audio_query(
                 "text": "Sorry, I had trouble processing your query.",
             }
         )
-        await websocket.send_json({"type": "status", "status": "idle"})

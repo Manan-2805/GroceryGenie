@@ -19,6 +19,7 @@ from app.api.chat import router as chat_router
 from app.api.orders import router as orders_router
 from app.api.products import router as products_router
 from app.api.ratings import router as ratings_router
+from app.api.routes import router as routes_router
 from app.api.users import router as users_router
 from app.api.ws import router as ws_router
 from app.core.config import UPLOADS_DIR, settings
@@ -134,6 +135,7 @@ app.include_router(cart_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(orders_router, prefix="/api/v1")
 app.include_router(ratings_router, prefix="/api/v1")
+app.include_router(routes_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/api/v1")
 

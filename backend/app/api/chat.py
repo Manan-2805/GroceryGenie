@@ -27,6 +27,10 @@ async def sse_generator(
     approved_payload: dict[str, Any] | None = None,
 ) -> AsyncGenerator[str, None]:
     try:
+        # Emit initial status
+        status_data = {"type": "status", "status": "processing"}
+        yield f"event: message\ndata: {json.dumps(status_data)}\n\n"
+
         # If this is an approved action execution, run the action
         if approved_action and approved_payload:
             result = await orchestrator.execute_approved_mutation(
@@ -38,6 +42,15 @@ async def sse_generator(
         if result["type"] == "permission_request":
             # Emit permission request
             yield f"event: permission_request\ndata: {json.dumps(result)}\n\n"
+        elif result.get("type") == "options_response":
+            # Emit options request
+            options_data = {
+                "type": "options_request",
+                "text": result.get("text", ""),
+                "options": result.get("options", []),
+                "free_input_allowed": result.get("free_input_allowed", True),
+            }
+            yield f"event: message\ndata: {json.dumps(options_data)}\n\n"
         else:
             # It's a standard response, simulate token streaming for smooth UI typing effect
             full_text = result.get("text", "")

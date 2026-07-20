@@ -9,29 +9,30 @@ from app.services.voice.tts import synthesize_text_to_pcm
 
 class TestVoicePipeline(unittest.TestCase):
     @patch("app.services.voice.asr.get_asr_model")
-    @patch("app.services.voice.asr.tempfile.mkstemp")
-    @patch("app.services.voice.asr.wave.open")
-    @patch("app.services.voice.asr.os.close")
+    @patch("app.services.voice.asr.tempfile.NamedTemporaryFile")
     @patch("app.services.voice.asr.os.path.exists")
     @patch("app.services.voice.asr.os.remove")
+    @patch("app.services.voice.asr.wave.open")
     def test_transcribe_pcm_chunk(
         self,
+        mock_wave_open,
         mock_remove,
         mock_exists,
-        _mock_close,
-        mock_wave_open,
-        mock_mkstemp,
+        mock_named_tempfile,
         mock_get_asr_model,
     ):  # noqa: PLR0913
         mock_exists.return_value = True
-        # Mock temp file path
-        mock_mkstemp.return_value = (99, "/tmp/mock_chunk.wav")
+        # Mock temp file context manager
+        mock_tmp = MagicMock()
+        mock_tmp.name = "/tmp/mock_chunk.wav"
+        mock_tmp.__enter__ = MagicMock(return_value=mock_tmp)
+        mock_tmp.__exit__ = MagicMock(return_value=False)
+        mock_named_tempfile.return_value = mock_tmp
 
         # Mock model recognition
-        mock_model = MagicMock()
+        mock_model = MagicMock(spec=["recognize"])
         mock_model.recognize.return_value = "order 2 kg tomatoes"
         mock_get_asr_model.return_value = mock_model
-
         # Mock wave write context manager
         mock_wave_file = MagicMock()
         mock_wave_open.return_value.__enter__.return_value = mock_wave_file

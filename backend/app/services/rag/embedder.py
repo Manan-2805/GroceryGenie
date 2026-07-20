@@ -21,7 +21,10 @@ def get_embedder() -> SentenceTransformer:
         else:
             model_to_load = settings.EMBEDDING_MODEL_PATH
             logger.info(f"Loading embedding model: {model_to_load}...")
-        _model = SentenceTransformer(model_to_load)
+
+        device = settings.torch_device
+        logger.info(f"Using device for embeddings: {device}")
+        _model = SentenceTransformer(model_to_load, device=device)
     return _model
 
 

@@ -15,6 +15,7 @@ backend/__pycache__
 .pytest_cache
 backend/.pytest_cache
 backend/.ruff_cache
+backend/prompt_logs/
 
 # Frontend build artifacts and deps
 frontend/node_modules

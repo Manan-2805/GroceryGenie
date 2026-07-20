@@ -14,10 +14,27 @@ class DAGExecutionError(RuntimeError):
     pass
 
 
+# Worker display names for progress reporting
+WORKER_DISPLAY_NAMES = {
+    "ProductQueryWorker": "🔍 Searching products",
+    "DietaryFactWorker": "🥗 Analyzing dietary info",
+    "OrderStatusWorker": "📦 Checking orders",
+    "CartActionWorker": "🛒 Updating cart",
+    "ExplainerWorker": "💬 Preparing explanation",
+    "StoreLayoutWorker": "📍 Finding store locations",
+    "SellerDashboardWorker": "📊 Loading dashboard",
+    "AddressWorker": "📍 Managing addresses",
+    "CheckoutWorker": "🛍️ Processing checkout",
+    "ProfileWorker": "👤 Updating profile",
+    "SellerProductWorker": "📦 Managing products",
+}
+
+
 async def execute_subgoal_dag(
     subgoals: list[dict[str, Any]],
     worker_runner: Callable[[dict[str, Any], dict[str, Any]], Any],
     _context: dict[str, Any],
+    progress_callback: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
     """
     Executes a list of subgoals represented as a DAG.
@@ -30,8 +47,12 @@ async def execute_subgoal_dag(
       }
     worker_runner is an async callable: worker_runner(subgoal, results)
     context contains session details, user_id, facts, etc.
+    progress_callback is an optional async callable to report progress.
     """
     logger.info(f"Decomposing DAG with {len(subgoals)} subgoals...")
+
+    if progress_callback:
+        await progress_callback(f"🧠 Planning {len(subgoals)} steps...")
 
     # Map subgoals by ID
     {sg["id"]: sg for sg in subgoals}
@@ -63,6 +84,13 @@ async def execute_subgoal_dag(
             f"Executing batch of runnable subgoals in parallel: {[sg['id'] for sg in runnable_batch]}"
         )
 
+        # Report progress for each worker starting
+        for sg in runnable_batch:
+            worker_type = sg["type"]
+            display = WORKER_DISPLAY_NAMES.get(worker_type, f"⚙️ Running {worker_type}")
+            if progress_callback:
+                await progress_callback(display)
+
         # Run this batch in parallel using asyncio.gather
         tasks = []
         for sg in runnable_batch:
@@ -75,13 +103,13 @@ async def execute_subgoal_dag(
             sg_id = sg["id"]
             if isinstance(res, Exception):
                 logger.error(f"Subgoal {sg_id} failed during execution: {res}")
-                # We raise to halt the DAG or store it in results for partial-failure synthesis
                 results[sg_id] = {"status": "failed", "error": str(res)}
             else:
                 results[sg_id] = {"status": "success", "output": res}
 
-            # Even if it fails, we mark it completed so the DAG can complete,
-            # and the Orchestrator will handle the partial-failure synthesis
             completed_ids.add(sg_id)
+
+    if progress_callback:
+        await progress_callback("✅ Done!")
 
     return results

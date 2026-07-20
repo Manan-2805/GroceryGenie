@@ -251,7 +251,7 @@ async def list_seller_products(
         query = query.where(Product.stock == 0)
 
     # Count total
-    count_stmt = select(func.count(Product.id)).select_from(query.subquery())
+    count_stmt = select(func.count()).select_from(query.subquery())
     count_res = await db.execute(count_stmt)
     total = count_res.scalar() or 0
 

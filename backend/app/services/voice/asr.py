@@ -54,18 +54,31 @@ def get_asr_model() -> Any:
 
 
 def transcribe_pcm_chunk(pcm_data: bytes, sample_rate: int = 16000) -> str:
-    """Writes raw PCM data to a temporary wav file and recognizes speech."""
+    """Writes raw PCM data to a temporary wav file and recognizes speech.
+
+    Uses NamedTemporaryFile with automatic cleanup instead of manual mkstemp.
+    """
     model = get_asr_model()
 
-    # Create temp wav file
-    fd, temp_path = tempfile.mkstemp(suffix=".wav")
+    # Check if model supports in-memory recognition (buffer interface)
     try:
-        os.close(fd)
-        with wave.open(temp_path, "wb") as w:
-            w.setnchannels(1)
-            w.setsampwidth(2)  # 16-bit
-            w.setframerate(sample_rate)
-            w.writeframes(pcm_data)
+        # Some ONNX ASR models support direct buffer recognition
+        if hasattr(model, "recognize_buffer") and callable(model.recognize_buffer):
+            result = model.recognize_buffer(pcm_data, sample_rate)
+            return str(result).strip()
+    except (AttributeError, RuntimeError):
+        logger.debug("ASR buffer recognition not available, using file fallback")
+
+    # Fallback: write to temporary file with auto-cleanup
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            temp_path = tmp.name
+            # Write WAV header and PCM data
+            with wave.open(temp_path, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)  # 16-bit
+                w.setframerate(sample_rate)
+                w.writeframes(pcm_data)
 
         result = model.recognize(temp_path)
         return str(result).strip()
