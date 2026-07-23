@@ -21,7 +21,9 @@ async def view_orders(
     """View user's order history."""
 
     order_result = await db.execute(
-        select(Order).where(Order.user_id == user_id).order_by(Order.created_at.desc())
+        select(Order)
+        .where(Order.customer_id == user_id)
+        .order_by(Order.created_at.desc())
     )
     orders = list(order_result.scalars().all())
 
@@ -44,7 +46,7 @@ async def view_orders(
                 {
                     "product_name": product.name if product else "Unknown",
                     "quantity": item.quantity,
-                    "price": float(item.price),
+                    "price": float(product.price),
                 }
             )
 
@@ -52,7 +54,7 @@ async def view_orders(
             {
                 "id": str(order.id),
                 "status": order.status.value,
-                "total": float(order.total_amount),
+                "total": float(order.total),
                 "created_at": order.created_at.isoformat()
                 if order.created_at
                 else None,

@@ -587,7 +587,7 @@ export const Agent: React.FC = () => {
                                             <button
                                               key={action.value}
                                               onClick={() =>
-                                                window.open(`/catalog/${productId}`, '_blank')
+                                                window.open(`/items/${productId}`, '_blank')
                                               }
                                               className="flex-1 px-2.5 py-1.5 bg-purple-100 dark:bg-purple-900/30 hover:bg-purple-200 dark:hover:bg-purple-800/40 text-purple-700 dark:text-purple-300 rounded-lg text-[11px] font-semibold transition"
                                             >
@@ -795,12 +795,26 @@ export const Agent: React.FC = () => {
                 </div>
               </div>
 
-              {/* Transcript */}
-              <div className="min-h-[80px] max-h-[160px] overflow-y-auto px-4 py-3 border dark:border-gray-800 rounded-2xl bg-white/80 dark:bg-gray-950/80 backdrop-blur-sm text-left">
-                <p className="text-sm text-gray-500 dark:text-gray-400 italic">
-                  {voiceState.transcript.length > 0
-                    ? voiceState.transcript
-                    : '"Waiting for speech..."'}
+              {/* Transcript & Response Area */}
+              <div className="w-full max-w-md min-h-[100px] max-h-[220px] overflow-y-auto px-4 py-3 border dark:border-gray-800 rounded-2xl bg-white/90 dark:bg-gray-950/90 backdrop-blur-sm text-left shadow-sm space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-purple-500">
+                    Live Transcript
+                  </span>
+                  {voiceState.sttTiming !== null && (
+                    <span className="text-[10px] text-gray-400 font-mono">
+                      STT: {(voiceState.sttTiming * 1000).toFixed(0)}ms
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm font-medium text-gray-800 dark:text-gray-200 leading-relaxed">
+                  {voiceState.transcript.length > 0 ? (
+                    voiceState.transcript
+                  ) : (
+                    <span className="text-gray-400 italic font-normal">
+                      "Tap mic or speak into your microphone..."
+                    </span>
+                  )}
                 </p>
               </div>
             </div>

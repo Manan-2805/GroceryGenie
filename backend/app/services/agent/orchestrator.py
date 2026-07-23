@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.enums import UserRole
 from app.services.agent.llm import call_llm, extract_json_from_response
-from app.services.agent.memory import get_user_facts
 from app.services.agent.tools import TOOL_DESCRIPTIONS, TOOL_REGISTRY
 from app.services.memory import (
     append_message_to_session,
@@ -49,10 +48,21 @@ For 'search_products': params can include query, category, min_price, max_price,
   For price comparisons, convert them to min_price and max_price numeric values.
 
 For 'add_to_cart'/'remove_from_cart'/'update_cart_quantity': params need product_id, quantity.
-  IMPORTANT: If the user did NOT specify a quantity, set quantity to null (the system will ask for it).
+  IMPORTANT: If product_id is not mentioned, set product_id to null. If quantity is not mentioned, set quantity to null.
 
 For 'switch_role': params need role ("customer" or "seller").
-For 'manage_addresses': params need action ("list"/"add"/"update"/"delete") and optionally address_data.
+
+For 'manage_addresses': params need action ("list"/"add"/"update"/"delete") and address_data object.
+  For action='add' or action='update', address_data fields:
+  - label: String (e.g. "Home", "Work", "Office")
+  - line1: Street address (e.g. "B-63 Street 5, Akshar Residency")
+  - line2: Suite/Apt/Building (optional)
+  - city: City name (e.g. "Bhuj", "Mumbai")
+  - state: State name (e.g. "Gujarat", "Maharashtra")
+  - postal_code: Postal/Zip code (e.g. "370001")
+  - country: Country name (e.g. "India")
+  - is_default: Boolean (optional, default false)
+
 For 'seller_create_product': params need name, description, category, price, stock.
 For 'seller_update_product': params need product_id, and optionally name/description/category/price/stock.
 For 'seller_delete_product': params need product_id.
@@ -161,13 +171,11 @@ class AgentOrchestrator:
         # Quantity pending state
         self._pending_quantity_context: dict[str, Any] | None = None
 
-    async def _get_facts(self) -> str:
-        if self._facts_cache is not None:
-            return self._facts_cache
-        facts = await get_user_facts(self.db, self.user_id)
-        facts_str = "; ".join([f.fact_text for f in facts]) if facts else "None"
-        self._facts_cache = facts_str
-        return facts_str
+    async def _get_facts(self, query: str | None = None) -> str:
+        from app.services.agent.memory import get_relevant_user_facts
+
+        facts = await get_relevant_user_facts(self.db, self.user_id, query_text=query)
+        return "; ".join([f.fact_text for f in facts]) if facts else "None"
 
     async def run_turn(self, user_message: str) -> dict[str, Any]:
         turn_start_time = time.perf_counter()
@@ -176,6 +184,16 @@ class AgentOrchestrator:
         )
 
         redis_client = get_redis_client()
+
+        # Check for address collection state from Redis or self
+        addr_collect_key = f"chat:session:{self.session_id}:address_collect"
+        addr_collect_str = await redis_client.get(addr_collect_key)
+        if addr_collect_str:
+            collect_ctx = json.loads(addr_collect_str)
+            await redis_client.delete(addr_collect_key)
+            return await self._handle_address_collect_response(
+                user_message, collect_ctx
+            )
 
         # Check for pending quantity response from Redis or self
         quantity_key = f"chat:session:{self.session_id}:pending_quantity"
@@ -269,7 +287,7 @@ class AgentOrchestrator:
 
         # Step 1: Classify intent + extract params (single LLM call)
         step_start = time.perf_counter()
-        facts_str = await self._get_facts()
+        facts_str = await self._get_facts(user_message)
         history = await get_session_history(str(self.session_id))
         history_str = "\n".join(
             [f"{msg['role']}: {msg['content']}" for msg in history[-6:]]
@@ -347,14 +365,27 @@ class AgentOrchestrator:
             f"[TIMING] Step 1: Intent classification - Time: {time.perf_counter() - step_start:.4f}s (tool: {selected_tool})"
         )
 
-        # Handle out of scope immediately
+        # Handle out of scope dynamically
         if selected_tool == "out_of_scope":
-            response_text = "I'm your GroceryGenie shopping assistant! I can help you find products, manage your cart, check orders, manage delivery addresses, or handle seller operations. How can I assist you with your groceries today?"
+            out_prompt = (
+                f"The user said: '{user_message}'. "
+                "You are GroceryGenie, a friendly AI grocery shopping assistant. "
+                "Briefly acknowledge what the user said in 1 warm sentence, then politely offer to help them find groceries, manage their cart, or check orders."
+            )
+            response_text = await call_llm(
+                system_prompt="You are GroceryGenie, a helpful grocery shopping assistant.",
+                user_prompt=out_prompt,
+                temperature=0.3,
+                max_tokens=150,
+                call_type="out_of_scope_response",
+            )
+            if not response_text or not response_text.strip():
+                response_text = "I'm your GroceryGenie shopping assistant! I can help you find products, manage your cart, check orders, or manage addresses. How can I help you today?"
             await append_message_to_session(str(self.session_id), "user", user_message)
             await append_message_to_session(
                 str(self.session_id), "assistant", response_text
             )
-            return {"type": "response", "text": response_text, "options": None}
+            return {"type": "response", "text": response_text.strip(), "options": None}
 
         # Store fact if found
         if (
@@ -371,6 +402,79 @@ class AgentOrchestrator:
                 # User didn't specify quantity, need to ask
                 product_id = params.get("product_id", "")
                 return await self._ask_for_quantity(product_id, user_message)
+
+        # Handle missing product_id for update_cart_quantity or remove_from_cart
+        if selected_tool in ("update_cart_quantity", "remove_from_cart"):
+            pid = params.get("product_id")
+            if not pid:
+                # Fetch cart items and show a product picker card
+                cart_res = await self._execute_tool("view_cart", {})
+                if (
+                    isinstance(cart_res, dict)
+                    and "items" in cart_res
+                    and cart_res["items"]
+                ):
+                    options = []
+                    new_qty = params.get("quantity", 1)
+                    for item in cart_res["items"]:
+                        item_pid = item.get("product_id", "")
+                        item_name = item.get("name", "")
+                        if item_pid:
+                            options.append(
+                                {
+                                    "label": item_name,
+                                    "value": item_pid,
+                                    "description": f"Currently {item.get('quantity', 1)} in cart",
+                                    "actions": [
+                                        {
+                                            "label": f"Set to {new_qty}"
+                                            if selected_tool == "update_cart_quantity"
+                                            else "Remove",
+                                            "value": f"add_{item_pid}"
+                                            if selected_tool == "update_cart_quantity"
+                                            else f"remove_{item_pid}",
+                                        }
+                                    ],
+                                }
+                            )
+                    action_label = (
+                        "update the quantity for"
+                        if selected_tool == "update_cart_quantity"
+                        else "remove"
+                    )
+                    return {
+                        "type": "options_response",
+                        "text": f"Which item in your cart would you like to {action_label}?",
+                        "options": options,
+                        "free_input_allowed": True,
+                    }
+                return {
+                    "type": "response",
+                    "text": "Your cart is currently empty.",
+                    "options": None,
+                }
+
+        # Handle address collection slot filling for manage_addresses action="add"
+        if selected_tool == "manage_addresses":
+            action = params.get("action", "list")
+            if action == "add":
+                addr_data = params.get("address_data") or {}
+                line1 = addr_data.get("line1") or addr_data.get("street")
+                city = addr_data.get("city")
+                if not line1 or not city:
+                    return await self._start_address_collect_flow(
+                        addr_data, user_message
+                    )
+
+        # Handle seller_create_product missing name guard
+        if selected_tool == "seller_create_product":
+            name = params.get("name")
+            if not name:
+                return {
+                    "type": "response",
+                    "text": 'To create a product, please specify the product name, description, category, price, and initial stock. For example: "Create product Organic Honey, description Fresh raw honey, category Bakery, price 7.99, stock 50"',
+                    "options": None,
+                }
 
         # Step 2: Execute tool
         step_start = time.perf_counter()
@@ -591,6 +695,104 @@ class AgentOrchestrator:
         )
 
         return response
+
+    async def _start_address_collect_flow(
+        self, initial_data: dict[str, Any], user_message: str
+    ) -> dict[str, Any]:
+        """Start the multi-turn slot filling flow for adding an address."""
+        from app.services.agent.tools.address_tools import _normalize_address_data
+
+        norm = _normalize_address_data(initial_data)
+        collected: dict[str, Any] = {}
+        for k in ("label", "line1", "line2", "city", "state", "postal_code", "country"):
+            if k in norm and norm[k]:
+                collected[k] = norm[k]
+
+        required = ["label", "line1", "city", "state", "postal_code"]
+        missing = [slot for slot in required if slot not in collected]
+
+        ctx = {
+            "collected": collected,
+            "missing": missing,
+            "original_query": user_message,
+        }
+
+        return await self._prompt_next_address_slot(ctx)
+
+    async def _prompt_next_address_slot(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Prompt for the next missing slot in address collection."""
+        missing = ctx.get("missing", [])
+        collected = ctx.get("collected", {})
+
+        if not missing:
+            # All required slots collected! Execute tool directly
+            result = await self._execute_tool(
+                "manage_addresses",
+                {"action": "add", "address_data": collected},
+            )
+            return await self._format_response(ctx.get("original_query", ""), result)
+
+        # Save dialogue state in Redis (5 min TTL)
+        redis_client = get_redis_client()
+        await redis_client.set(
+            f"chat:session:{self.session_id}:address_collect",
+            json.dumps(ctx),
+            ex=300,
+        )
+
+        next_slot = missing[0]
+        prompts: dict[str, tuple[str, list[dict[str, Any]] | None]] = {
+            "label": (
+                "What label would you like for this address? (e.g. Home, Work, Office)",
+                [
+                    {
+                        "label": "Home 🏠",
+                        "value": "Home",
+                        "description": "Primary residence",
+                    },
+                    {
+                        "label": "Work 💼",
+                        "value": "Work",
+                        "description": "Office or workplace",
+                    },
+                    {
+                        "label": "Other 📍",
+                        "value": "Other",
+                        "description": "Custom label",
+                    },
+                ],
+            ),
+            "line1": ("What is your street address (Line 1)?", None),
+            "city": ("Which city is this address located in?", None),
+            "state": ("Which state is this in?", None),
+            "postal_code": ("What is your postal / zip code?", None),
+        }
+
+        text_prompt, options = prompts.get(
+            next_slot, (f"Please provide your {next_slot}:", None)
+        )
+        return {
+            "type": "options_response" if options else "response",
+            "text": text_prompt,
+            "options": options,
+            "free_input_allowed": True,
+        }
+
+    async def _handle_address_collect_response(
+        self, user_message: str, ctx: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Ingest user input into current missing address slot and continue."""
+        val = user_message.strip()
+        missing = ctx.get("missing", [])
+        collected = ctx.get("collected", {})
+
+        if missing:
+            current_slot = missing.pop(0)
+            collected[current_slot] = val
+            ctx["collected"] = collected
+            ctx["missing"] = missing
+
+        return await self._prompt_next_address_slot(ctx)
 
     async def _store_fact(self, fact_text: str, fact_category: str | None) -> None:
         """Store a persistent fact for the user."""
@@ -817,40 +1019,6 @@ class AgentOrchestrator:
                 return {"type": "response", "text": results["message"], "options": None}
             return {"type": "response", "text": results["message"], "options": None}
 
-        # Fast 0ms Python formatting for product lists (search_products)
-        if isinstance(results, list):
-            if not results:
-                return {
-                    "type": "response",
-                    "text": "No matching products were found in our store.",
-                    "options": None,
-                }
-            options = []
-            for p in results:
-                if isinstance(p, dict) and "name" in p and "id" in p:
-                    pid = p["id"]
-                    price_val = p.get("price", 0.0)
-                    stock_val = p.get("stock", 0)
-                    options.append(
-                        {
-                            "label": p["name"],
-                            "value": pid,
-                            "description": f"${price_val:.2f} • Stock: {stock_val}",
-                            "actions": [
-                                {"label": "Add to Cart", "value": f"add_{pid}"},
-                                {"label": "View Details", "value": f"view_{pid}"},
-                            ],
-                        }
-                    )
-            count = len(results)
-            text = f"Found {count} matching product{'s' if count != 1 else ''}:"
-            return {
-                "type": "options_response" if options else "response",
-                "text": text,
-                "options": options if options else None,
-                "free_input_allowed": True,
-            }
-
         # If empty results
         if isinstance(results, dict) and results.get("empty"):
             return {
@@ -859,7 +1027,7 @@ class AgentOrchestrator:
                 "options": None,
             }
 
-        # ── Cart result ─────────────────────────────────────────────
+        # ── 1. Cart result ─────────────────────────────────────────────
         if isinstance(results, dict) and "items" in results and "total" in results:
             items = results["items"]
             total = results["total"]
@@ -903,7 +1071,7 @@ class AgentOrchestrator:
                 "free_input_allowed": True,
             }
 
-        # ── Orders result ────────────────────────────────────────────
+        # ── 2. Orders result ────────────────────────────────────────────
         if (
             isinstance(results, list)
             and results
@@ -942,7 +1110,7 @@ class AgentOrchestrator:
                 "free_input_allowed": True,
             }
 
-        # ── Addresses result ─────────────────────────────────────────
+        # ── 3. Addresses result ─────────────────────────────────────────
         if isinstance(results, dict) and "addresses" in results:
             addresses = results["addresses"]
             if not addresses:
@@ -955,19 +1123,22 @@ class AgentOrchestrator:
             lines = [f"**📍 Your Addresses** ({len(addresses)})\n"]
             for addr in addresses:
                 aid = addr.get("id", "")
-                label = addr.get("label") or ""
-                street = addr.get("street", "")
+                label = addr.get("label") or "Home"
+                line1 = addr.get("line1", "")
                 city = addr.get("city", "")
                 state = addr.get("state", "")
+                postal_code = addr.get("postal_code", "")
                 is_default = addr.get("is_default", False)
                 default_tag = " 🏠 Default" if is_default else ""
-                display = f"{label or street}, {city}, {state}{default_tag}"
+                display = (
+                    f"{label}: {line1}, {city}, {state} {postal_code}{default_tag}"
+                )
                 lines.append(f"• {display}")
                 options.append(
                     {
-                        "label": label or street,
+                        "label": label,
                         "value": aid,
-                        "description": f"{street}, {city}, {state}{default_tag}",
+                        "description": f"{line1}, {city}, {state} {postal_code}{default_tag}",
                         "actions": [
                             {
                                 "label": "Set Default",
@@ -991,7 +1162,7 @@ class AgentOrchestrator:
                 "free_input_allowed": True,
             }
 
-        # ── Facts / preferences result ────────────────────────────────
+        # ── 4. Facts / preferences result ────────────────────────────────
         if (
             isinstance(results, list)
             and results
@@ -1005,7 +1176,7 @@ class AgentOrchestrator:
                 lines.append(f"• [{cat}] {text}")
             return {"type": "response", "text": "\n".join(lines), "options": None}
 
-        # ── Seller catalog result ─────────────────────────────────────
+        # ── 5. Seller catalog result ─────────────────────────────────────
         if (
             isinstance(results, list)
             and results

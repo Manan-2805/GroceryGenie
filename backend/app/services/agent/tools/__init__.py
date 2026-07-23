@@ -48,7 +48,7 @@ TOOL_DESCRIPTIONS = {
     "place_order": "Place an order using current cart and default address",
     "view_orders": "View order history",
     "switch_role": "Switch between customer and seller role (role: 'customer' or 'seller')",
-    "manage_addresses": "Manage addresses (action: 'list', 'add', 'update', 'delete'; address_data optional)",
+    "manage_addresses": "Manage addresses (action: 'list'/'add'/'update'/'delete'; address_data object with label, line1, line2, city, state, postal_code, country, is_default)",
     "view_facts": "View persistent facts/preferences about the user",
     "seller_list_products": "List seller's own products",
     "seller_create_product": "Create a new product as seller (name, description, category, price, stock)",

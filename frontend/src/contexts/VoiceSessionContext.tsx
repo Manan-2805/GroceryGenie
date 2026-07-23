@@ -11,6 +11,7 @@ export type VoiceSessionState = {
     summary: string;
     payload: unknown;
   } | null;
+  lastToolResult: Record<string, unknown> | null;
   error: string | null;
   audioLevel: number; // 0-1 for waveform visualization
 };
@@ -28,6 +29,7 @@ type VoiceMessage = {
   action?: string;
   summary?: string;
   payload?: unknown;
+  result?: Record<string, unknown>;
   status?: VoiceSessionState['status'];
   text?: string;
   timing?: number;
@@ -57,6 +59,7 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
     isConnecting: false,
     isConnected: false,
     permissionRequest: null,
+    lastToolResult: null,
     error: null,
     audioLevel: 0,
   });
@@ -132,6 +135,7 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
         isConnecting: false,
         isConnected: false,
         permissionRequest: null,
+        lastToolResult: null,
         error: clearError ? null : prev.error,
         audioLevel: 0,
       }));
@@ -266,6 +270,23 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
                       ...prev,
                       transcript: data.text as string,
                       sttTiming: typeof data.timing === 'number' ? data.timing : null,
+                    }));
+                  }
+                  break;
+                case 'options_request':
+                  if (typeof data.text === 'string') {
+                    setState((prev) => ({
+                      ...prev,
+                      status: 'speaking',
+                      transcript: data.text as string,
+                    }));
+                  }
+                  break;
+                case 'tool_result':
+                  if (typeof data.result === 'object' && data.result !== null) {
+                    setState((prev) => ({
+                      ...prev,
+                      lastToolResult: data.result as Record<string, unknown>,
                     }));
                   }
                   break;

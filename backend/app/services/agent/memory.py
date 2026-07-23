@@ -101,3 +101,43 @@ async def get_user_facts(db: AsyncSession, user_id: uuid.UUID) -> list[Persisten
         .order_by(PersistentFact.created_at.desc())
     )
     return list(result.scalars().all())
+
+
+async def get_relevant_user_facts(
+    db: AsyncSession, user_id: uuid.UUID, query_text: str | None = None, limit: int = 3
+) -> list[PersistentFact]:
+    """Retrieve user facts filtered by semantic relevance to query_text."""
+    all_facts = await get_user_facts(db, user_id)
+    if not all_facts:
+        return []
+    if not query_text or not query_text.strip() or len(all_facts) <= limit:
+        return all_facts[:limit]
+
+    try:
+        import numpy as np
+
+        from app.services.rag.embedder import embed_text
+
+        query_vec = np.array(embed_text(query_text.strip()), dtype=np.float32)
+        query_norm = np.linalg.norm(query_vec)
+        if query_norm == 0:
+            return all_facts[:limit]
+
+        scored_facts: list[tuple[float, PersistentFact]] = []
+        for fact in all_facts:
+            fact_vec = np.array(embed_text(fact.fact_text), dtype=np.float32)
+            fact_norm = np.linalg.norm(fact_vec)
+            if fact_norm > 0:
+                sim = float(np.dot(query_vec, fact_vec) / (query_norm * fact_norm))
+            else:
+                sim = 0.0
+            scored_facts.append((sim, fact))
+
+        scored_facts.sort(key=lambda x: x[0], reverse=True)
+        relevant = [fact for sim, fact in scored_facts if sim >= 0.35]
+        if not relevant:
+            return all_facts[:limit]
+        return relevant[:limit]
+    except Exception as e:
+        logger.warning(f"Error computing semantic fact relevance: {e}")
+        return all_facts[:limit]

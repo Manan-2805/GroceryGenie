@@ -9,6 +9,34 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models.address import Address
 
 
+def _normalize_address_data(raw_data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize incoming dict keys to match Address DB model column names."""
+    norm = dict(raw_data)
+    # Normalize street / line_1 / house_number -> line1
+    if "line1" not in norm:
+        for alias in ("street", "line_1", "house_number", "street_address", "address"):
+            if alias in norm and norm[alias]:
+                norm["line1"] = norm[alias]
+                break
+
+    # Normalize postal_code / zip_code / pin_code / zip -> postal_code
+    if "postal_code" not in norm:
+        for alias in ("zip_code", "pin_code", "zip", "pincode", "postal"):
+            if alias in norm and norm[alias]:
+                norm["postal_code"] = str(norm[alias])
+                break
+
+    # Default country to India if missing
+    if "country" not in norm or not norm["country"]:
+        norm["country"] = "India"
+
+    # Default label to Home if missing
+    if "label" not in norm or not norm["label"]:
+        norm["label"] = "Home"
+
+    return norm
+
+
 async def manage_addresses(
     db: AsyncSession,
     user_id: UUID,
@@ -29,11 +57,13 @@ async def manage_addresses(
             "addresses": [
                 {
                     "id": str(a.id),
-                    "label": a.label or "",
-                    "street": a.street,
+                    "label": a.label or "Home",
+                    "line1": a.line1,
+                    "line2": a.line2 or "",
                     "city": a.city,
                     "state": a.state,
-                    "zip_code": a.zip_code,
+                    "postal_code": a.postal_code,
+                    "country": a.country,
                     "is_default": a.is_default,
                 }
                 for a in addresses
@@ -41,23 +71,36 @@ async def manage_addresses(
         }
 
     if action == "add" and address_data:
-        is_default = address_data.get("is_default", False)
+        norm = _normalize_address_data(address_data)
+        line1 = norm.get("line1")
+        city = norm.get("city")
+        if not line1 or not city:
+            return {
+                "success": False,
+                "message": "Missing required address fields (street/line1 and city are required).",
+            }
+
+        is_default = norm.get("is_default", False)
         if is_default:
-            # Reset other defaults
             await _reset_defaults(db, user_id)
 
         address = Address(
             user_id=user_id,
-            label=address_data.get("label", ""),
-            street=address_data["street"],
-            city=address_data["city"],
-            state=address_data.get("state", ""),
-            zip_code=address_data.get("zip_code", ""),
+            label=norm.get("label", "Home"),
+            line1=line1,
+            line2=norm.get("line2", ""),
+            city=city,
+            state=norm.get("state", ""),
+            postal_code=norm.get("postal_code", ""),
+            country=norm.get("country", "India"),
             is_default=is_default,
         )
         db.add(address)
         await db.commit()
-        return {"success": True, "message": "Address added successfully."}
+        return {
+            "success": True,
+            "message": f"Address '{address.label}' added successfully.",
+        }
 
     if action == "update" and address_id and address_data:
         addr_uuid = UUID(address_id)
@@ -68,30 +111,32 @@ async def manage_addresses(
         if not address:
             return {"success": False, "message": "Address not found."}
 
-        if address_data.get("is_default"):
+        norm = _normalize_address_data(address_data)
+        if norm.get("is_default"):
             await _reset_defaults(db, user_id)
 
-        if "street" in address_data:
-            address.street = address_data["street"]
-        if "city" in address_data:
-            address.city = address_data["city"]
-        if "state" in address_data:
-            address.state = address_data["state"]
-        if "zip_code" in address_data:
-            address.zip_code = address_data["zip_code"]
-        if "label" in address_data:
-            address.label = address_data["label"]
-        if "is_default" in address_data:
-            address.is_default = address_data["is_default"]
+        if "line1" in norm:
+            address.line1 = norm["line1"]
+        if "line2" in norm:
+            address.line2 = norm["line2"]
+        if "city" in norm:
+            address.city = norm["city"]
+        if "state" in norm:
+            address.state = norm["state"]
+        if "postal_code" in norm:
+            address.postal_code = norm["postal_code"]
+        if "country" in norm:
+            address.country = norm["country"]
+        if "label" in norm:
+            address.label = norm["label"]
+        if "is_default" in norm:
+            address.is_default = norm["is_default"]
 
         await db.commit()
-        return {"success": True, "message": "Address updated."}
+        return {"success": True, "message": "Address updated successfully."}
 
     if action == "delete" and address_id:
         addr_uuid = UUID(address_id)
-        await db.execute(
-            select(Address).where(Address.id == addr_uuid, Address.user_id == user_id)
-        )
         from sqlalchemy import delete
 
         await db.execute(
@@ -100,7 +145,10 @@ async def manage_addresses(
         await db.commit()
         return {"success": True, "message": "Address deleted."}
 
-    return {"success": False, "message": f"Invalid action: {action}"}
+    return {
+        "success": False,
+        "message": f"Invalid action or missing address data: {action}",
+    }
 
 
 async def _reset_defaults(db: AsyncSession, user_id: UUID) -> None:

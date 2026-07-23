@@ -255,6 +255,7 @@ async def call_llm(
 
                 logger.info(
                     f"LLM call successful: provider='{provider_name}', model={model}, "
+                    f"LLM Response Text='{content}'"
                     f"call_type={call_type}, duration={duration_ms:.0f}ms, attempt={attempt + 1}"
                     + (
                         f", tokens_in={input_tokens}, tokens_out={output_tokens}"

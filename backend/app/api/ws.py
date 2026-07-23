@@ -239,26 +239,25 @@ async def voice_websocket_endpoint(
                             silence_timer = 0.0
                             logger.debug(f"Speech onset detected (RMS={rms:.1f}).")
 
-                            # Barge-in: User speaks while agent is playing TTS
-                            if is_playing_response:
-                                logger.info("Barge-in detected! Stopping TTS playback.")
-                                stop_tts_playback()
-                                # Send stop signal to frontend
-                                await safe_send_json(
-                                    websocket, {"type": "stop_playback"}
-                                )
-                                await safe_send_bytes(
-                                    websocket, b""
-                                )  # Empty bytes = stop signal
-                                barge_in_cooldown = (
-                                    asyncio.get_event_loop().time() + 0.1
-                                )
-
                         speech_buffer.extend(chunk_to_analyze)
                         silence_timer = 0.0
                         speech_timer += vad_chunk_size / (
                             BYTES_PER_SAMPLE * SAMPLE_RATE
                         )
+
+                        # Barge-in: User speaks for at least 300ms while agent is playing TTS
+                        if is_playing_response and speech_timer >= 0.30:
+                            logger.info(
+                                f"Barge-in confirmed ({speech_timer:.2f}s speech >= 300ms threshold)! Stopping TTS playback."
+                            )
+                            stop_tts_playback()
+                            # Send stop signal and transcribing status to frontend
+                            await safe_send_json(websocket, {"type": "stop_playback"})
+                            await safe_send_json(
+                                websocket, {"type": "status", "status": "transcribing"}
+                            )
+                            await safe_send_bytes(websocket, b"")
+                            barge_in_cooldown = asyncio.get_event_loop().time() + 0.1
 
                         if speech_timer > MAX_SPEECH_DURATION:
                             logger.info("Max speech duration reached. Processing...")
@@ -435,6 +434,13 @@ async def handle_orchestrator_result(
                 "free_input_allowed": free_input_val,
             },
         )
+        await safe_send_json(
+            websocket,
+            {
+                "type": "tool_result",
+                "result": result,
+            },
+        )
         async for pcm_chunk in synthesize_text_to_pcm_stream(
             text_val, emotion="neutral"
         ):
@@ -457,6 +463,13 @@ async def handle_orchestrator_result(
                 "navigate_label": nav_label,
                 "options": options_val,
                 "free_input_allowed": free_input_val,
+            },
+        )
+        await safe_send_json(
+            websocket,
+            {
+                "type": "tool_result",
+                "result": result,
             },
         )
 
