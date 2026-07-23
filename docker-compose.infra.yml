@@ -73,23 +73,6 @@ services:
       timeout: 10s
       retries: 5
 
-  langfuse:
-    image: langfuse/langfuse:2
-    container_name: langfuse-server
-    ports:
-      - "3000:3000"
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/langfuse
-      - NEXTAUTH_SECRET=my_nextauth_secret_must_be_long_and_secure_12345
-      - NEXTAUTH_URL=http://localhost:3000
-      - TELEMETRY_ENABLED=false
-      - PORT=3000
-    networks:
-      - grocergenie-network
-    depends_on:
-      db:
-        condition: service_healthy
-
 networks:
   grocergenie-network:
     driver: bridge

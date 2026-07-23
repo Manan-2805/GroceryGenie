@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import uuid
 from typing import Any
@@ -40,6 +41,42 @@ def get_qdrant_client() -> QdrantClient:
         except Exception as e:
             logger.error(f"Error initializing Qdrant collection: {e}")
     return _qdrant_client
+
+
+def cleanup_stale_qdrant_vectors(db_ids: set[uuid.UUID]) -> None:
+    """Remove Qdrant points whose product IDs no longer exist in the database.
+    This prevents stale results when the DB is reset/re-seeded.
+    """
+    client = get_qdrant_client()
+    try:
+        # Get all point IDs from Qdrant collection
+        scroll_result = client.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=10000,  # Fetch up to 10k points
+            with_payload=False,
+            with_vectors=False,
+        )
+        qdrant_ids = set()
+        for point in scroll_result[0]:
+            with contextlib.suppress(ValueError, AttributeError):
+                qdrant_ids.add(uuid.UUID(str(point.id)))
+
+        stale_ids = qdrant_ids - db_ids
+        if stale_ids:
+            logger.info(
+                f"Found {len(stale_ids)} stale product vectors in Qdrant. Cleaning up..."
+            )
+            client.delete(
+                collection_name=COLLECTION_NAME,
+                points_selector=qmodels.PointIdsList(
+                    points=[str(pid) for pid in stale_ids]
+                ),
+            )
+            logger.info(f"Cleaned up {len(stale_ids)} stale vectors from Qdrant.")
+        else:
+            logger.debug("No stale vectors found in Qdrant.")
+    except Exception as e:
+        logger.warning(f"Failed to cleanup stale Qdrant vectors: {e}")
 
 
 async def index_product_in_qdrant(
@@ -123,17 +160,20 @@ async def hybrid_search_products(
             collection_name=COLLECTION_NAME,
             query=query_vector,
             query_filter=qdrant_filter,
-            limit=limit * 2,  # Fetch more to allow merging
+            score_threshold=0.55,  # Filter out low-similarity noise vectors
+            limit=limit * 2,  # Fetch candidate pool for RRF
         ).points
         vector_hits = [
-            uuid.UUID(hit.payload["id"]) for hit in search_results if hit.payload
+            uuid.UUID(hit.payload["id"])
+            for hit in search_results
+            if hit.payload and getattr(hit, "score", 1.0) >= 0.55
         ]
     except Exception as e:
         logger.error(f"Qdrant vector search failed: {e}")
 
     # 2. Keyword/BM25 Search (Database query using ILIKE)
     # Match in name, description, or category
-    words = query_text.split()
+    words = [w.strip() for w in query_text.split() if len(w.strip()) > 1]
     db_query = select(Product).where(Product.is_active)
 
     if category:
@@ -143,37 +183,34 @@ async def hybrid_search_products(
     if max_price is not None:
         db_query = db_query.where(Product.price <= max_price)
 
-    # Simple text filter combining all words
-    for word in words:
-        db_query = db_query.where(
-            Product.name.ilike(f"%{word}%")
-            | Product.description.ilike(f"%{word}%")
-            | Product.category.ilike(f"%{word}%")
-        )
+    # Text filter combining matching words
+    if words:
+        for word in words:
+            db_query = db_query.where(
+                Product.name.ilike(f"%{word}%")
+                | Product.description.ilike(f"%{word}%")
+                | Product.category.ilike(f"%{word}%")
+            )
 
     db_query = db_query.limit(limit * 2)
     db_result = await db.execute(db_query)
     keyword_products = db_result.scalars().all()
     keyword_hits = [p.id for p in keyword_products]
 
-    # 3. Merge results using a simple rank fusion
-    # We want to keep items that match both high in the order, followed by vector-only and keyword-only
-    merged_ids: list[uuid.UUID] = []
+    # 3. Merge results using Reciprocal Rank Fusion (RRF with k=60)
+    rrf_scores: dict[uuid.UUID, float] = {}
+    k_constant = 60.0
 
-    # First, items present in both lists
-    common_hits = [pid for pid in vector_hits if pid in keyword_hits]
-    merged_ids.extend(common_hits)
+    for rank, pid in enumerate(vector_hits):
+        rrf_scores[pid] = rrf_scores.get(pid, 0.0) + (1.0 / (k_constant + rank + 1))
 
-    # Next, items present only in vector search
-    vector_only = [pid for pid in vector_hits if pid not in common_hits]
-    merged_ids.extend(vector_only)
+    for rank, pid in enumerate(keyword_hits):
+        rrf_scores[pid] = rrf_scores.get(pid, 0.0) + (1.0 / (k_constant + rank + 1))
 
-    # Finally, items present only in keyword search
-    keyword_only = [pid for pid in keyword_hits if pid not in common_hits]
-    merged_ids.extend(keyword_only)
-
-    # Crop to limit
-    final_ids = merged_ids[:limit]
+    sorted_ids = sorted(
+        rrf_scores.keys(), key=lambda pid: rrf_scores[pid], reverse=True
+    )
+    final_ids = sorted_ids[:limit]
 
     if not final_ids:
         return []
@@ -182,5 +219,20 @@ async def hybrid_search_products(
     products_result = await db.execute(select(Product).where(Product.id.in_(final_ids)))
     products_map = {p.id: p for p in products_result.scalars().all()}
 
-    # Preserve the merged/ranked ordering
+    # 5. Check for stale Qdrant vectors: IDs from vector search not present in DB
+    vector_hit_set = set(vector_hits)
+    missing_ids = [
+        pid for pid in final_ids if pid in vector_hit_set and pid not in products_map
+    ]
+    if missing_ids and len(missing_ids) > len(final_ids) * 0.5:
+        # More than 50% of vector results are stale — trigger background cleanup
+        logger.warning(
+            f"Detected {len(missing_ids)} stale Qdrant vectors out of {len(final_ids)} results. "
+            "Triggering Qdrant cleanup..."
+        )
+        all_db_result = await db.execute(select(Product.id))
+        all_db_ids = {row[0] for row in all_db_result.fetchall()}
+        cleanup_stale_qdrant_vectors(all_db_ids)
+
+    # Preserve the RRF-ranked ordering (skip missing IDs)
     return [products_map[pid] for pid in final_ids if pid in products_map]

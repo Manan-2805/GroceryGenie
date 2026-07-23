@@ -35,6 +35,8 @@ def log_llm_call(
     temperature: float = 0.0,
     max_tokens: int = 256,
     duration_ms: float = 0.0,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
     error: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> None:
@@ -49,6 +51,8 @@ def log_llm_call(
         temperature: Temperature used
         max_tokens: Max tokens used
         duration_ms: Duration of the call in milliseconds
+        input_tokens: Number of input/prompt tokens used (from API response usage)
+        output_tokens: Number of output/completion tokens used (from API response usage)
         error: Error message if the call failed
         extra: Any additional context to log
     """
@@ -69,6 +73,8 @@ def log_llm_call(
             "temperature": temperature,
             "max_tokens": max_tokens,
             "duration_ms": round(duration_ms, 2),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,
             "response": response,

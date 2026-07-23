@@ -14,11 +14,12 @@
 
 GroceryGenie is a **premium, voice-first intelligent grocery shopping assistant** that revolutionizes how customers interact with online grocery stores. It enables:
 
-- **🎤 Voice & Text AI Agent**: Natural language shopping assistant that can find products, manage carts, check orders, handle addresses, and more
-- **🧠 Intelligent Agent System**: DAG-based task decomposition with LLM-powered reasoning
-- **🔍 Hybrid Search**: Combines vector embeddings (Qdrant) with keyword search for accurate product discovery  
+- **🎤 Voice & Text AI Agent**: Natural language shopping assistant that can find products, manage carts, check orders, handle addresses, and more — with **≤1 LLM call per turn** for most actions
+- **⚡ Zero-LLM Fast Path**: Button clicks, cart actions, order checks, and address management execute in **<10ms with 0 LLM calls**
+- **🔍 Hybrid RRF Search**: Combines Qdrant vector embeddings + PostgreSQL BM25 keyword search fused via **Reciprocal Rank Fusion (k=60)** for accurate product discovery
+- **🔄 Event-Driven Vector Sync**: Seller product create/update/deactivate automatically syncs to Qdrant in real-time — no manual re-indexing
 - **🗺️ Store Layout Awareness**: Neo4j graph database maps products to aisles and sections
-- **🏪 Seller Dashboard**: Comprehensive tools for inventory management, order fulfillment, and analytics
+- **🏪 Seller Dashboard**: Complete inventory management — create, update, and deactivate products via text or voice
 - **🔒 Safety-First**: Strict dietary/allergen guardrails with disclaimers, permission-gated actions
 
 ---
@@ -39,8 +40,28 @@ GroceryGenie is a **premium, voice-first intelligent grocery shopping assistant*
 │                    Backend (FastAPI + Granian)                   │
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │              Agent Orchestrator (DAG-based)               │   │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐   │   │
+│  │              Agent Orchestrator (Optimized)               │   │
+│  │  ┌────────────────┐  ┌──────────┐  ┌──────────────────┐  │  │
+│  │  │ 0ms Fast Path  │  │Single LLM│  │ Python Formatters│  │  │
+│  │  │ (13 patterns,  │  │ Router   │  │ (cart, orders,   │  │  │
+│  │  │  0 LLM calls)  │  │ (1 call) │  │  addresses, etc) │  │  │
+│  │  └────────────────┘  └──────────┘  └──────────────────┘  │  │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                 Voice Pipeline                            │   │
+│  │  Mic → VAD (Silero) → ASR (Parakeet) → Agent → TTS (Piper)│  │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐   │
+│  │PostgreSQL│ │  Redis   │ │  Qdrant  │ │  Neo4j (Graph)   │   │
+│  │(BM25 SQL)│ │(Session) │ │(Vectors+ │ │ (Store Layout)   │   │
+│  │          │ │          │ │Auto-Sync)│ │                  │   │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+�   │
 │  │  │LLM Decomp│ │ DAG Exec │ │ Workers  │ │ Synthesis│   │   │
 │  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘   │   │
 │  └──────────────────────────────────────────────────────────┘   │
@@ -211,7 +232,6 @@ Try these tasks with the AI assistant (both voice and text) to explore capabilit
 | **VAD** | Silero VAD | Voice activity detection |
 | **Embeddings** | BAAI/bge-small-en-v1.5 | Product vector embeddings |
 | **LLM** | NVIDIA NIM (Llama 3.1 70B) | Agent reasoning |
-| **Observability** | Langfuse (optional) | LLM tracing & monitoring |
 | **MCP** | FastMCP | Model Context Protocol server |
 
 ---
@@ -321,7 +341,7 @@ make check
 ## 🐳 Docker Deployment
 
 ```bash
-# 1. Start infrastructure (PostgreSQL, Redis, Qdrant, Neo4j, Langfuse)
+# 1. Start infrastructure (PostgreSQL, Redis, Qdrant, Neo4j)
 #    All services share a single Postgres instance with separate DBs
 docker compose -f docker-compose.infra.yml up -d
 

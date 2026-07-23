@@ -27,8 +27,12 @@ async def sse_generator(
     approved_payload: dict[str, Any] | None = None,
 ) -> AsyncGenerator[str, None]:
     try:
+        # Create a shared progress asyncio.Queue and set it on orchestrator
+        progress_queue: asyncio.Queue[str] = asyncio.Queue()
+        orchestrator._progress_queue = progress_queue
+
         # Emit initial status
-        status_data = {"type": "status", "status": "processing"}
+        status_data = {"type": "status", "status": "🧠 Thinking..."}
         yield f"event: message\ndata: {json.dumps(status_data)}\n\n"
 
         # If this is an approved action execution, run the action
@@ -37,7 +41,21 @@ async def sse_generator(
                 approved_action, approved_payload
             )
         else:
-            result = await orchestrator.run_turn(user_message)
+            # Run orchestrator with concurrent progress reading
+            result_task = asyncio.create_task(orchestrator.run_turn(user_message))
+
+            # Read progress events while orchestrator runs
+            while not result_task.done():
+                try:
+                    status_text = await asyncio.wait_for(
+                        progress_queue.get(), timeout=0.5
+                    )
+                    status_data = {"type": "status", "status": status_text}
+                    yield f"event: message\ndata: {json.dumps(status_data)}\n\n"
+                except TimeoutError:
+                    pass
+
+            result = result_task.result()
 
         if result["type"] == "permission_request":
             # Emit permission request

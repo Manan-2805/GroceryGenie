@@ -53,6 +53,8 @@ migrate:
 	cd backend; uv run alembic upgrade head
 
 db-reset:
+	docker exec grocergenie-redis redis-cli FLUSHALL
+	docker exec grocergenie-neo4j cypher-shell -u neo4j -p grocergeniepass "MATCH (n) DETACH DELETE n;"
 	cd backend; uv run python -B -m app.db.reset
 	cd backend; uv run alembic upgrade head
 	cd backend; uv run python -B -m app.db.seed

@@ -1,12 +1,14 @@
 import asyncio
 import logging
+import os
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any
 
 from piper import PiperVoice
 from piper.voice import SynthesisConfig  # type: ignore[attr-defined]
 
-from app.core.config import settings
+from app.core.config import MODELS_DIR, settings
 
 logger = logging.getLogger("app.services.voice.tts")
 
@@ -19,6 +21,17 @@ EMOTION_PRESETS = {
 }
 
 _piper_voice: PiperVoice | None = None
+
+# Fallback audio phrases for TTS error recovery
+FALLBACK_PHRASES = [
+    "Sorry, something went wrong.",
+    "Please try again.",
+    "I'm having trouble processing that.",
+    "Give me a moment.",
+]
+
+# Directory for generated fallback audio files
+FALLBACK_AUDIO_DIR = Path(MODELS_DIR) / "fallback_audio"
 
 
 def get_piper_voice() -> PiperVoice:
@@ -83,3 +96,60 @@ async def synthesize_text_to_pcm_stream(
             else (chunk.audio if hasattr(chunk, "audio") else chunk)
         )
         yield audio_bytes
+
+
+def generate_fallback_audio_files() -> int:
+    """Generate fallback audio WAV files from FALLBACK_PHRASES using Piper TTS.
+    Files are saved to FALLBACK_AUDIO_DIR with WAV headers.
+    Returns the number of files generated (0 if all already exist).
+    """
+    import wave
+
+    os.makedirs(str(FALLBACK_AUDIO_DIR), exist_ok=True)
+    generated_count = 0
+
+    for i, phrase in enumerate(FALLBACK_PHRASES):
+        safe_name = f"fallback_{i}.wav"
+        filepath = FALLBACK_AUDIO_DIR / safe_name
+
+        if filepath.exists():
+            continue
+
+        try:
+            pcm_data = synthesize_text_to_pcm(phrase, emotion="neutral")
+            with wave.open(str(filepath), "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(16000)
+                wav_file.writeframes(pcm_data)
+            generated_count += 1
+            logger.info(f"Generated fallback audio: {filepath} (phrase: '{phrase}')")
+        except Exception as e:
+            logger.warning(
+                f"Failed to generate fallback audio for phrase '{phrase}': {e}"
+            )
+
+    return generated_count
+
+
+def get_random_fallback_audio_pcm() -> bytes:
+    """Return the PCM data of a random fallback audio file.
+    If no fallback files exist, returns empty bytes.
+    """
+    import random
+    import wave
+
+    if not FALLBACK_AUDIO_DIR.exists():
+        return b""
+
+    wav_files = sorted(FALLBACK_AUDIO_DIR.glob("fallback_*.wav"))
+    if not wav_files:
+        return b""
+
+    chosen = random.choice(wav_files)  # nosec
+    try:
+        with wave.open(str(chosen), "rb") as wav:
+            return wav.readframes(wav.getnframes())
+    except Exception as e:
+        logger.warning(f"Failed to read fallback audio file {chosen}: {e}")
+        return b""

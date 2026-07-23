@@ -2,11 +2,13 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 import uuid
 from typing import Any
 
 import numpy as np
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
+from fastapi.websockets import WebSocketState
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db
@@ -28,7 +30,33 @@ VAD_THRESHOLD = 500.0  # RMS amplitude threshold for speech detection (adjusted)
 MIN_SILENCE_DURATION = 1.2  # Seconds of silence to trigger end of speech turn
 MAX_SPEECH_DURATION = 15.0  # Max speech turn duration in seconds
 HEARTBEAT_INTERVAL = 30.0  # Send ping every 30 seconds
-HEARTBEAT_TIMEOUT = 15.0  # Close connection if no pong within 15 seconds
+HEARTBEAT_TIMEOUT = 30.0  # Close connection if no pong within 30 seconds (increased to accommodate long LLM calls)
+
+
+async def safe_send_json(websocket: WebSocket, data: dict[str, Any]) -> bool:
+    """Safely sends JSON over WebSocket, preventing ASGI exceptions if disconnected."""
+    try:
+        if websocket.client_state == WebSocketState.CONNECTED:
+            await websocket.send_json(data)
+            return True
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    except Exception as e:
+        logger.debug(f"Failed to send JSON over WebSocket: {e}")
+    return False
+
+
+async def safe_send_bytes(websocket: WebSocket, data: bytes) -> bool:
+    """Safely sends binary bytes over WebSocket, preventing ASGI exceptions if disconnected."""
+    try:
+        if websocket.client_state == WebSocketState.CONNECTED:
+            await websocket.send_bytes(data)
+            return True
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    except Exception as e:
+        logger.debug(f"Failed to send bytes over WebSocket: {e}")
+    return False
 
 
 def calculate_rms(audio_chunk: bytes) -> float:
@@ -118,11 +146,12 @@ async def voice_websocket_endpoint(
     voice_output_queue: asyncio.Queue[bytes] = asyncio.Queue()
 
     # Send session initialized message
-    await websocket.send_json(
+    await safe_send_json(
+        websocket,
         {
             "type": "session_started",
             "session_id": str(session_id),
-        }
+        },
     )
 
     async def voice_sender_task() -> None:
@@ -133,12 +162,12 @@ async def voice_websocket_endpoint(
                 chunk = await voice_output_queue.get()
                 if chunk == b"EOF":
                     is_playing_response = False
-                    await websocket.send_json({"type": "playback_ended"})
+                    await safe_send_json(websocket, {"type": "playback_ended"})
                     voice_output_queue.task_done()
                     continue
 
                 # Send binary audio frame
-                await websocket.send_bytes(chunk)
+                await safe_send_bytes(websocket, chunk)
                 voice_output_queue.task_done()
                 await asyncio.sleep(0.01)  # Progressive stream delivery
         except asyncio.CancelledError:
@@ -153,7 +182,9 @@ async def voice_websocket_endpoint(
             while True:
                 await asyncio.sleep(HEARTBEAT_INTERVAL)
                 try:
-                    await websocket.send_json({"type": "ping"})
+                    sent = await safe_send_json(websocket, {"type": "ping"})
+                    if not sent:
+                        break
                     # Check if we've received a pong recently
                     elapsed_since_pong = (
                         asyncio.get_event_loop().time() - last_pong_time
@@ -213,9 +244,11 @@ async def voice_websocket_endpoint(
                                 logger.info("Barge-in detected! Stopping TTS playback.")
                                 stop_tts_playback()
                                 # Send stop signal to frontend
-                                await websocket.send_json({"type": "stop_playback"})
-                                await websocket.send_bytes(
-                                    b""
+                                await safe_send_json(
+                                    websocket, {"type": "stop_playback"}
+                                )
+                                await safe_send_bytes(
+                                    websocket, b""
                                 )  # Empty bytes = stop signal
                                 barge_in_cooldown = (
                                     asyncio.get_event_loop().time() + 0.1
@@ -284,11 +317,12 @@ async def voice_websocket_endpoint(
                             action, payload
                         )
                         text = res.get("text", "Done.")
-                        await websocket.send_json(
+                        await safe_send_json(
+                            websocket,
                             {
                                 "type": "partial_transcript",
                                 "text": f"[Action Completed]: {text}",
-                            }
+                            },
                         )
                         is_playing_response = True
                         async for pcm_chunk in synthesize_text_to_pcm_stream(
@@ -368,15 +402,18 @@ async def handle_orchestrator_result(
         action = str(result.get("action", ""))
         summary = str(result.get("summary", ""))
         payload = result.get("payload", {})
-        await websocket.send_json(
+        await safe_send_json(
+            websocket,
             {
                 "type": "permission_request",
                 "action": action,
                 "summary": summary,
                 "payload": payload,
-            }
+            },
         )
-        await websocket.send_json({"type": "status", "status": "waiting_permission"})
+        await safe_send_json(
+            websocket, {"type": "status", "status": "waiting_permission"}
+        )
 
         warning_text = f"I need your permission to {summary}"
         async for pcm_chunk in synthesize_text_to_pcm_stream(
@@ -389,13 +426,14 @@ async def handle_orchestrator_result(
         text_val = str(result.get("text", ""))
         options_val = result.get("options", [])
         free_input_val = bool(result.get("free_input_allowed", True))
-        await websocket.send_json(
+        await safe_send_json(
+            websocket,
             {
                 "type": "options_request",
                 "text": text_val,
                 "options": options_val,
                 "free_input_allowed": free_input_val,
-            }
+            },
         )
         async for pcm_chunk in synthesize_text_to_pcm_stream(
             text_val, emotion="neutral"
@@ -410,7 +448,8 @@ async def handle_orchestrator_result(
         options_val = result.get("options")
         free_input_val = bool(result.get("free_input_allowed", False))
 
-        await websocket.send_json(
+        await safe_send_json(
+            websocket,
             {
                 "type": "response",
                 "text": text_val,
@@ -418,7 +457,7 @@ async def handle_orchestrator_result(
                 "navigate_label": nav_label,
                 "options": options_val,
                 "free_input_allowed": free_input_val,
-            }
+            },
         )
 
         emotion = "neutral"
@@ -437,7 +476,7 @@ async def handle_orchestrator_result(
             await voice_output_queue.put(pcm_chunk)
         await voice_output_queue.put(b"EOF")
 
-        await websocket.send_json({"type": "status", "status": "idle"})
+        await safe_send_json(websocket, {"type": "status", "status": "idle"})
 
 
 async def process_audio_query(
@@ -451,37 +490,72 @@ async def process_audio_query(
         return
 
     # Send status update
-    await websocket.send_json({"type": "status", "status": "transcribing"})
+    await safe_send_json(websocket, {"type": "status", "status": "transcribing"})
 
-    # 1. Transcribe audio chunk using nemo-parakeet (offload to thread)
+    # 1. Transcribe audio chunk using nemo-parakeet (offload to thread) with timing
     logger.info("Transcribing speech buffer...")
+    transcribe_start = time.perf_counter()
     transcript = await asyncio.to_thread(
         transcribe_pcm_chunk, bytes(audio_data), SAMPLE_RATE
     )
-    logger.info(f"ASR Transcript: '{transcript}'")
+    transcribe_duration = time.perf_counter() - transcribe_start
+    logger.info(f"ASR Transcript: '{transcript}' (took {transcribe_duration:.3f}s)")
 
     if not transcript:
-        await websocket.send_json({"type": "status", "status": "idle"})
+        await safe_send_json(websocket, {"type": "status", "status": "idle"})
         return
 
-    # Send final transcription text
-    await websocket.send_json({"type": "partial_transcript", "text": transcript})
+    # Send final transcription text with timing info
+    await safe_send_json(
+        websocket,
+        {
+            "type": "partial_transcript",
+            "text": transcript,
+            "timing": round(transcribe_duration, 2),
+        },
+    )
 
     # Send orchestrator processing status
-    await websocket.send_json({"type": "status", "status": "thinking"})
+    await safe_send_json(websocket, {"type": "status", "status": "thinking"})
 
     # 2. Run agent orchestrator turn
     try:
+        turn_start = time.perf_counter()
         result = await orchestrator.run_turn(transcript)
+        turn_duration = time.perf_counter() - turn_start
+        logger.info(f"Orchestrator turn completed in {turn_duration:.3f}s")
+
         await handle_orchestrator_result(
             result, orchestrator, websocket, voice_output_queue
         )
 
     except Exception as e:
         logger.error(f"Error processing agent voice turn: {e}")
-        await websocket.send_json(
-            {
-                "type": "response",
-                "text": "Sorry, I had trouble processing your query.",
-            }
-        )
+        # Fallback: play a random fallback audio instead of showing error
+        from app.services.voice.tts import get_random_fallback_audio_pcm
+
+        fallback_pcm = get_random_fallback_audio_pcm()
+        if fallback_pcm:
+            # Send fallback audio
+            chunk_size = 4096
+            for i in range(0, len(fallback_pcm), chunk_size):
+                chunk = fallback_pcm[i : i + chunk_size]
+                await voice_output_queue.put(chunk)
+                await asyncio.sleep(0.01)
+            await voice_output_queue.put(b"EOF")
+            await safe_send_json(
+                websocket,
+                {
+                    "type": "response",
+                    "text": "Sorry, I had trouble processing your query.",
+                },
+            )
+        else:
+            await safe_send_json(
+                websocket,
+                {
+                    "type": "response",
+                    "text": "Sorry, I had trouble processing your query.",
+                },
+            )
+        await safe_send_json(websocket, {"type": "status", "status": "idle"})

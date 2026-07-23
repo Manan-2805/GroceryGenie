@@ -253,7 +253,7 @@ export const Catalog: React.FC = () => {
         </div>
 
         {/* Product Listing */}
-        <div className="lg:col-span-3 space-y-6">
+        <div className="lg:col-span-3 space-y-6 max-h-screen overflow-y-auto">
           {products.length === 0 && !loading ? (
             <div className="p-12 border border-dashed rounded-2xl text-center text-gray-400 bg-white dark:bg-gray-900">
               No matching products found in the catalog.

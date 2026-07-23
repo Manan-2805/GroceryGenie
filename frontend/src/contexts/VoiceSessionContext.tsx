@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 export type VoiceSessionState = {
   status: 'idle' | 'transcribing' | 'thinking' | 'speaking' | 'waiting_permission';
   transcript: string;
+  sttTiming: number | null; // STT transcription time in seconds
   isConnecting: boolean;
   isConnected: boolean;
   permissionRequest: {
@@ -29,6 +30,7 @@ type VoiceMessage = {
   payload?: unknown;
   status?: VoiceSessionState['status'];
   text?: string;
+  timing?: number;
   navigate_to?: string;
   navigate_label?: string;
   session_id?: string;
@@ -51,6 +53,7 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const [state, setState] = useState<VoiceSessionState>({
     status: 'idle',
     transcript: '',
+    sttTiming: null,
     isConnecting: false,
     isConnected: false,
     permissionRequest: null,
@@ -125,6 +128,7 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
       setState((prev) => ({
         status: 'idle',
         transcript: '',
+        sttTiming: null,
         isConnecting: false,
         isConnected: false,
         permissionRequest: null,
@@ -258,7 +262,11 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
                   break;
                 case 'partial_transcript':
                   if (typeof data.text === 'string') {
-                    setState((prev) => ({ ...prev, transcript: data.text as string }));
+                    setState((prev) => ({
+                      ...prev,
+                      transcript: data.text as string,
+                      sttTiming: typeof data.timing === 'number' ? data.timing : null,
+                    }));
                   }
                   break;
                 case 'response':

@@ -29,6 +29,16 @@ async def reset_db() -> None:
         except Exception as e:
             logger.warning(f"Error executing custom drops: {e}")
 
+    # Wipe Qdrant vector collection
+    try:
+        from app.services.rag.retriever import COLLECTION_NAME, get_qdrant_client
+
+        qclient = get_qdrant_client()
+        qclient.delete_collection(collection_name=COLLECTION_NAME)
+        logger.info("Deleted Qdrant products collection.")
+    except Exception as e:
+        logger.warning(f"Could not delete Qdrant collection during reset: {e}")
+
     logger.info("Database reset completed successfully.")
 
 

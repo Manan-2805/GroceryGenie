@@ -84,9 +84,53 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as ve:
             logger.error(f"Startup voice self-test failed with exception: {ve}")
             _app.state.voice_ok = False
+
+        # Run startup LLM health check
+        from app.services.agent.llm import call_llm
+
+        logger.info("Running startup LLM health check...")
+        try:
+            llm_health_response = await call_llm(
+                system_prompt="You are a helpful assistant.",
+                user_prompt="Say exactly 'Hello! I am ready to help.'",
+                max_tokens=20,
+                temperature=0.0,
+                call_type="startup_health",
+            )
+            if llm_health_response and "hello" in llm_health_response.lower():
+                logger.info(
+                    f"Startup LLM health check passed. Response: '{llm_health_response.strip()}'"
+                )
+                _app.state.llm_ok = True
+            elif llm_health_response:
+                logger.warning(
+                    f"Startup LLM health check returned unexpected response: '{llm_health_response.strip()}'"
+                )
+                _app.state.llm_ok = True
+            else:
+                logger.warning("Startup LLM health check failed: empty response.")
+                _app.state.llm_ok = False
+        except Exception as lle:
+            logger.error(f"Startup LLM health check failed with exception: {lle}")
+            _app.state.llm_ok = False
+
+        # Generate fallback audio files if they don't exist
+        from app.services.voice.tts import generate_fallback_audio_files
+
+        logger.info("Ensuring fallback audio files exist...")
+        try:
+            fallback_count = generate_fallback_audio_files()
+            if fallback_count > 0:
+                logger.info(f"Generated {fallback_count} fallback audio file(s).")
+            else:
+                logger.info("Fallback audio files already exist.")
+        except Exception as fae:
+            logger.warning(f"Failed to generate fallback audio files: {fae}")
+
     except Exception as e:
         logger.error(f"Error during lifespan startup initialization: {e}")
         _app.state.voice_ok = False
+        _app.state.llm_ok = False
 
     yield
 
@@ -184,20 +228,8 @@ async def api_health_check(request: Request) -> dict[str, Any]:
     except Exception as e:
         logger.debug(f"Neo4j health check failed: {e}")
 
-    # Check LLM
-    llm_ok = False
-    try:
-        from app.services.agent.llm import call_llm
-
-        # Fast 2-token completion check
-        await call_llm(
-            system_prompt="System check.",
-            user_prompt="OK",
-            max_tokens=2,
-        )
-        llm_ok = True
-    except Exception as e:
-        logger.debug(f"LLM health check failed: {e}")
+    # Use the stored startup LLM health state
+    llm_ok = getattr(request.app.state, "llm_ok", False)
 
     voice_ok = getattr(request.app.state, "voice_ok", False)
 

@@ -1,6 +1,8 @@
+import json
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 # Resolve MODELS_DIR: inside Docker, it's mounted at /app/models; otherwise, at backend/models on the host
 if Path("/app/models").exists():
@@ -15,10 +17,13 @@ else:
 
 os.environ["HF_HOME"] = str(MODELS_DIR / "huggingface")
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger("app.core.config")
+
+# Model names that strictly require temperature=1.0
+TEMPERATURE_RESTRICTED_MODELS = {"kimi-k2.6", "kimi-k2.5", "moonshot-v1"}
 
 
 def detect_gpu_providers() -> list[str]:
@@ -98,10 +103,13 @@ class Settings(BaseSettings):
     NEO4J_USER: str = Field(default="neo4j")
     NEO4J_PASSWORD: str = Field(default="grocergeniepass")
 
-    # LLM Orchestrator (NIM / OpenAI compatible API)
+    # LLM Orchestrator (legacy single-provider fields - kept for backward compatibility)
     NIM_API_KEY: str = Field(default="placeholder_nim_api_key")
     NIM_BASE_URL: str = Field(default="https://integrate.api.nvidia.com/v1")
     NIM_MODEL: str = Field(default="meta/llama-3.1-70b-instruct")
+
+    # Multi-provider LLM configuration (JSON list env var)
+    LLM_PROVIDERS: str = Field(default="")
 
     # Google OAuth credentials
     GOOGLE_CLIENT_ID: str = Field(default="placeholder_client_id")
@@ -131,11 +139,6 @@ class Settings(BaseSettings):
     # Embedding model config
     EMBEDDING_MODEL_PATH: str = Field(default="BAAI/bge-small-en-v1.5")
 
-    # Langfuse Configuration
-    LANGFUSE_PUBLIC_KEY: str = Field(default="placeholder_langfuse_public_key")
-    LANGFUSE_SECRET_KEY: str = Field(default="placeholder_langfuse_secret_key")
-    LANGFUSE_HOST: str = Field(default="http://langfuse:3000")
-
     # Server config
     GRANIAN_WORKERS: int = Field(default=1)
     LOG_LEVEL: str = Field(default="INFO")
@@ -146,12 +149,62 @@ class Settings(BaseSettings):
     USE_GPU: bool = Field(default=True)
     CUDA_DEVICE: int = Field(default=0)
 
+    @field_validator("LLM_PROVIDERS", mode="before")
+    @classmethod
+    def parse_llm_providers(cls, v: str) -> str:
+        """Validate LLM_PROVIDERS JSON string."""
+        if v and v.strip():
+            try:
+                parsed = json.loads(v)
+                if not isinstance(parsed, list) or len(parsed) == 0:
+                    raise ValueError("LLM_PROVIDERS must be a non-empty JSON array")
+                for i, provider in enumerate(parsed):
+                    if not isinstance(provider, dict):
+                        raise ValueError(f"Provider at index {i} must be an object")
+                    for key in ("name", "api_key", "base_url", "model"):
+                        if key not in provider:
+                            raise ValueError(
+                                f"Provider at index {i} missing required key '{key}'"
+                            )
+                    if "temperature" not in provider:
+                        provider["temperature"] = 0.3
+                    if "timeout" not in provider:
+                        provider["timeout"] = 60.0
+                    if "type" not in provider:
+                        provider["type"] = "primary"
+            except json.JSONDecodeError as e:
+                raise ValueError(f"LLM_PROVIDERS is not valid JSON: {e}") from e
+        return v
+
     @property
     def parsed_origins(self) -> list[str]:
         return [
             origin.strip()
             for origin in self.ALLOWED_ORIGINS.split(",")
             if origin.strip()
+        ]
+
+    @property
+    def parsed_llm_providers(self) -> list[dict[str, Any]]:
+        """Parse LLM_PROVIDERS JSON string into a list of provider configs.
+        Falls back to legacy NIM_* fields if LLM_PROVIDERS is empty.
+        """
+        if self.LLM_PROVIDERS and self.LLM_PROVIDERS.strip():
+            parsed = json.loads(self.LLM_PROVIDERS)
+            assert isinstance(parsed, list)  # nosec: type guard for mypy
+            return parsed
+
+        # Fallback to legacy single-provider config
+        return [
+            {
+                "name": "legacy",
+                "api_key": self.NIM_API_KEY,
+                "base_url": self.NIM_BASE_URL,
+                "model": self.NIM_MODEL,
+                "temperature": 0.3,
+                "timeout": 60.0,
+                "type": "primary",
+            }
         ]
 
     @property

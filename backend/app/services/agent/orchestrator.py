@@ -1,28 +1,18 @@
+import asyncio
+import contextlib
 import json
 import logging
+import re
 import time
 import uuid
 from typing import Any
 
-from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.cart import CartItem
 from app.db.models.enums import UserRole
-from app.services.agent.dag import execute_subgoal_dag
 from app.services.agent.llm import call_llm, extract_json_from_response
-from app.services.agent.memory import classify_and_store_fact, get_user_facts
-from app.services.agent.workers.address import AddressWorker
-from app.services.agent.workers.cart import CartActionWorker
-from app.services.agent.workers.checkout import CheckoutWorker
-from app.services.agent.workers.dietary import DietaryFactWorker
-from app.services.agent.workers.explainer import ExplainerWorker
-from app.services.agent.workers.layout import StoreLayoutWorker
-from app.services.agent.workers.order import OrderStatusWorker
-from app.services.agent.workers.product import ProductQueryWorker
-from app.services.agent.workers.profile import ProfileWorker
-from app.services.agent.workers.seller import SellerDashboardWorker
-from app.services.agent.workers.seller_product import SellerProductWorker
+from app.services.agent.memory import get_user_facts
+from app.services.agent.tools import TOOL_DESCRIPTIONS, TOOL_REGISTRY
 from app.services.memory import (
     append_message_to_session,
     get_redis_client,
@@ -31,129 +21,125 @@ from app.services.memory import (
 
 logger = logging.getLogger("app.services.agent.orchestrator")
 
-# Initialize Langfuse client lazily (not at module level) to prevent startup crashes
-_langfuse_client = None
+# Single prompt for intent classification + parameter extraction
+INTENT_PROMPT = """You are a grocery assistant. Determine what the user wants to do and extract parameters.
 
+Available tools and their parameters (tool_name: parameters):
+{tool_descriptions}
 
-def _get_langfuse() -> Any:
-    """Get or create Langfuse client lazily. Returns False if disabled."""
-    global _langfuse_client
-    _langfuse_client = False
-    return False
+User facts/preferences: {facts}
+Recent conversation: {history}
 
+If the user's request is completely unrelated to grocery shopping (e.g. sports, politics, coding, general knowledge), set tool to "out_of_scope".
+If the user's request expresses a durable personal fact (dietary restriction, strong preference, allergy), include it in "fact_to_remember".
+Do NOT extract one-off purchase requests or search queries as facts.
 
-def _safe_langfuse_trace(**kwargs: Any) -> Any:
-    """Safe wrapper for Langfuse trace creation."""
-    lf = _get_langfuse()
-    if not lf:
-        return _NullTrace()
-    try:
-        return lf.trace(**kwargs)
-    except Exception as e:
-        logger.warning(f"Langfuse trace creation failed: {e}")
-        return _NullTrace()
-
-
-def _safe_langfuse_span(trace: Any, **kwargs: Any) -> Any:
-    """Safe wrapper for Langfuse span creation."""
-    if trace is None or isinstance(trace, _NullTrace):
-        return _NullSpan()
-    try:
-        return trace.span(**kwargs)
-    except Exception as e:
-        logger.warning(f"Langfuse span creation failed: {e}")
-        return _NullSpan()
-
-
-class _NullTrace:
-    """Null object pattern for when Langfuse is disabled."""
-
-    def update(self, **_kwargs: Any) -> None:
-        pass
-
-    def span(self, **_kwargs: Any) -> Any:
-        return _NullSpan()
-
-
-class _NullSpan:
-    """Null object pattern for Langfuse spans."""
-
-    def end(self, **_kwargs: Any) -> None:
-        pass
-
-
-DECOMPOSITION_SYSTEM_PROMPT = """You are a task decomposer for a grocery shopping AI assistant.
-Your job is to break down the user's natural language request into a list of subgoals.
-
-Available worker classes:
-1. ProductQueryWorker: Searches products (use for finding products, comparing prices/ratings).
-2. DietaryFactWorker: Analyzes dietary requirements and ingredients (depends on ProductQueryWorker to supply product details).
-3. OrderStatusWorker: Checks the status of past orders.
-4. CartActionWorker: Proposes adding, updating or removing items in the shopping cart (depends on ProductQueryWorker to find the correct product ID/price).
-5. ExplainerWorker: Summarizes or explains structured data into friendly language (depends on other workers to supply the data).
-6. StoreLayoutWorker: Finds product store locations (aisle/section) and neighboring items (depends on ProductQueryWorker to supply product ID).
-7. SellerDashboardWorker: Retrieves seller business stats (only spawn if role is 'seller').
-8. AddressWorker: Manages saved addresses (list, create, update, delete).
-9. CheckoutWorker: Handles cart summary, address selection, and order placement.
-10. ProfileWorker: Manages user profile (view, update name, switch role, manage facts).
-11. SellerProductWorker: Manages seller products (list, create, update, deactivate - only for 'seller' role).
-
-Available frontend routes (use navigate_to to send user to the right page):
-- /items - Browse grocery catalog
-- /items/:id - Product detail page
-- /cart - Shopping cart
-- /checkout - Checkout page
-- /orders - Order history
-- /seller - Seller dashboard
-- /inventory - Inventory management
-- /fulfillment - Fulfillment queue
-- /analysis - Sales analysis
-- /settings - User settings
-- /agent - AI assistant
-
-User's standing facts/preferences: {facts}
-Chat history: {history}
-
-You must return a JSON list of subgoals with dependencies. Format:
-[
-  {{
-    "id": "unique subgoal ID (e.g. A, B, C)",
-    "type": "WorkerClassName",
-    "goal": "Description of what this worker should accomplish",
-    "depends_on": ["List of subgoal IDs this task depends on, or empty list"]
-  }}
-]
-
-Output ONLY raw JSON. No markdown backticks, no prose."""
-
-SYNTHESIS_SYSTEM_PROMPT = """You are a grocery shopping assistant.
-Your job is to synthesize a friendly, natural language response to the user based on the results of several sub-tasks.
-
-User's standing facts/preferences: {facts}
-User's query: {query}
-
-Sub-task results:
-{results_context}
-
-Create a friendly, helpful, conversational response. If any sub-task failed, explain gracefully.
-If the results suggest navigating to a specific page (e.g. catalog, product detail, checkout, orders), you can propose a navigation intent.
-
-If you need to ask the user a question with structured options, include them in the response:
+Return ONLY JSON:
 {{
-  "text": "Your question or response to the user",
-  "navigate_to": "/path/to/page" or null,
-  "navigate_label": "Label describing the navigation" or null,
-  "options": [
-    {{"label": "Option 1", "value": "option1", "description": "What this option does"}},
-    {{"label": "Option 2", "value": "option2", "description": "What this option does"}}
-  ] or null (if no options needed),
-  "free_input_allowed": true or false (whether user can type custom response)
+  "tool": "tool_name or out_of_scope",
+  "params": {{ "param1": "value1", ... }},
+  "fact_to_remember": "fact summary or null",
+  "fact_category": "dietary/preference/instruction/other or null",
+  "out_of_scope_reason": "reason string or null (only if tool is out_of_scope)"
 }}
 
-If no options are needed, set "options" to null.
-If you are just providing information (not asking a question), set both "options" and "free_input_allowed" to null/false.
+For 'search_products': params can include query, category, min_price, max_price, min_rating, in_stock_only.
+  IMPORTANT: If the user mentions any filter like "less than $5", "under $10", "cheaper than", "more than $X",
+  "price range", "minimum rating", "organic only", "in stock", extract them into the appropriate params.
+  For price comparisons, convert them to min_price and max_price numeric values.
 
-Output ONLY raw JSON. No markdown backticks, no prose."""
+For 'add_to_cart'/'remove_from_cart'/'update_cart_quantity': params need product_id, quantity.
+  IMPORTANT: If the user did NOT specify a quantity, set quantity to null (the system will ask for it).
+
+For 'switch_role': params need role ("customer" or "seller").
+For 'manage_addresses': params need action ("list"/"add"/"update"/"delete") and optionally address_data.
+For 'seller_create_product': params need name, description, category, price, stock.
+For 'seller_update_product': params need product_id, and optionally name/description/category/price/stock.
+For 'seller_delete_product': params need product_id.
+For 'place_order': no params needed (uses cart + default address).
+For 'view_cart'/'view_orders'/'view_facts'/'seller_list_products': no params needed.
+
+Output ONLY raw JSON. No markdown code blocks, no prose."""
+
+RESPONSE_PROMPT = """You are a friendly grocery shopping assistant. Format the tool execution results into a natural response.
+
+CRITICAL RULES:
+- ONLY mention products/data that actually appear in the results below.
+- Do NOT invent products, names, or prices.
+- If there are 0 results, say so honestly.
+- Keep responses concise and helpful.
+- NEVER show raw UUIDs or technical identifiers to the user.
+
+User query: {query}
+Results: {results}
+
+If the results include product data and making sense, offer structured options for the user to take actions (add to cart, view details).
+Each option can have "actions" for quick actions:
+{{
+  "text": "Your response text",
+  "options": [
+    {{"label": "Product Name", "value": "product_id", "description": "Price info", "actions": [{{"label": "Add to Cart", "value": "add_product_id"}}, {{"label": "View Details", "value": "view_product_id"}}]}},
+  ]
+}}
+
+If no options make sense, set options to null.
+Output ONLY raw JSON: {{"text": "...", "options": [...] or null}}."""
+
+# Prompt for narrowing down search results (when too_many is returned)
+NARROWING_PROMPT = """You are a friendly grocery assistant helping the user narrow down their product search.
+
+The user searched for: "{query}"
+We found {count} products. Here are the available categories: {categories}
+Price range: ${price_min:.2f} - ${price_max:.2f}
+Sample product names: {product_names}
+
+Your task:
+1. Analyze these products and decide the best way to help the user narrow down.
+2. Generate a response that asks the user to be more specific.
+3. Suggest filtering options like category, price range, or product type.
+4. You may ask with structured options (e.g., "Which type? Whole milk, Almond milk...") or as a natural question.
+
+Output ONLY raw JSON:
+{{
+  "text": "Your question to help the user narrow down their search",
+  "options": [
+    {{"label": "Option Name", "value": "option_value", "description": "Brief description"}}
+  ] or null if you want a free-text response
+}}"""
+
+# Prompt for asking quantity when not specified
+QUANTITY_PROMPT = """You are a friendly grocery assistant. The user wants to add a product to their cart but didn't specify the quantity.
+
+Product: {product_name}
+
+Ask the user how many they would like to add. Keep it brief.
+
+Output ONLY raw JSON:
+{{
+  "text": "How many {product_name} would you like to add?",
+  "options": [
+    {{"label": "1", "value": "1", "description": "Single item"}},
+    {{"label": "2", "value": "2", "description": "Two items"}},
+    {{"label": "3", "value": "3", "description": "Three items"}},
+    {{"label": "5", "value": "5", "description": "Five items"}}
+  ]
+}}"""
+
+
+def _sanitize_error_message(raw_error: str) -> str:
+    """Sanitize error messages to avoid leaking technical details to users."""
+    # Common patterns to mask
+    error_lower = raw_error.lower()
+    if "uuid" in error_lower or "badly formed" in error_lower:
+        return "I couldn't find that product. Please search for it first and select from the results."
+    if "json" in error_lower or "decode" in error_lower:
+        return "I had trouble understanding that. Could you rephrase?"
+    if "timeout" in error_lower:
+        return "The request took too long. Please try again."
+    if "api key" in error_lower or "auth" in error_lower:
+        return "I'm having connection issues. Please try again later."
+    # Default
+    return "Something went wrong. Please try again."
 
 
 class AgentOrchestrator:
@@ -168,22 +154,20 @@ class AgentOrchestrator:
         self.user_id = user_id
         self.session_id = session_id
         self.user_role = user_role
-        # Cache for user facts to avoid repeated DB calls
         self._facts_cache: str | None = None
+        self._progress_queue: asyncio.Queue[str] | None = None
+        # Narrowing state
+        self._narrowing_context: dict[str, Any] | None = None
+        # Quantity pending state
+        self._pending_quantity_context: dict[str, Any] | None = None
 
     async def _get_facts(self) -> str:
-        """Get user facts with caching within a turn."""
         if self._facts_cache is not None:
             return self._facts_cache
         facts = await get_user_facts(self.db, self.user_id)
         facts_str = "; ".join([f.fact_text for f in facts]) if facts else "None"
         self._facts_cache = facts_str
         return facts_str
-
-    async def _emit_status(self, _status: str) -> dict[str, Any] | None:
-        """Emit a status update to be sent as SSE event. Returns None if no streaming connection."""
-        # Status events are handled at the SSE generator level
-        return None
 
     async def run_turn(self, user_message: str) -> dict[str, Any]:
         turn_start_time = time.perf_counter()
@@ -193,581 +177,923 @@ class AgentOrchestrator:
 
         redis_client = get_redis_client()
 
-        # Check for pending action in Redis
+        # Check for pending quantity response from Redis or self
+        quantity_key = f"chat:session:{self.session_id}:pending_quantity"
+        pending_quantity_str = await redis_client.get(quantity_key)
+        if pending_quantity_str:
+            self._pending_quantity_context = json.loads(pending_quantity_str)
+            await redis_client.delete(quantity_key)
+            return await self._handle_quantity_response(user_message)
+        if self._pending_quantity_context:
+            return await self._handle_quantity_response(user_message)
+
+        # Check for narrowing response from Redis or self
+        narrowing_key = f"chat:session:{self.session_id}:narrowing_context"
+        narrowing_str = await redis_client.get(narrowing_key)
+        if narrowing_str:
+            self._narrowing_context = json.loads(narrowing_str)
+            await redis_client.delete(narrowing_key)
+            return await self._handle_narrowing_response(user_message)
+        if self._narrowing_context:
+            return await self._handle_narrowing_response(user_message)
+
+        # Check for pending permission action
         pending_key = f"chat:session:{self.session_id}:pending_action"
         pending_data_str = await redis_client.get(pending_key)
 
-        start_step = time.perf_counter()
         if pending_data_str:
             pending_data = json.loads(pending_data_str)
-            classification_prompt = f"""Analyze the user's input: '{user_message}'
-We previously asked them to confirm this action: '{pending_data.get("summary", "an action")}'
+            # Check if user is confirming via simple keyword
+            msg_lower = user_message.strip().lower()
+            is_confirm = msg_lower in (
+                "yes",
+                "sure",
+                "ok",
+                "do it",
+                "proceed",
+                "confirm",
+                "yeah",
+                "yep",
+                "approve",
+            )
+            is_deny = msg_lower in (
+                "no",
+                "stop",
+                "cancel",
+                "never mind",
+                "don't",
+                "dont",
+                "nah",
+            )
 
-Decide if the user is confirming (agreeing to proceed, e.g. "yes", "sure", "do it"), denying (declining/canceling, e.g. "no", "stop", "cancel"), or if their message is unrelated to this action.
-Return JSON ONLY:
-{{
-  "intent": "confirm" or "deny" or "unrelated"
-}}"""
-            try:
-                class_res = await call_llm(
-                    system_prompt="You are a precise user intent classifier.",
-                    user_prompt=classification_prompt,
-                    temperature=0.0,
-                    max_tokens=64,
-                    call_type="intent_classifier",
-                )
-                cleaned_class = extract_json_from_response(class_res)
-                class_data = json.loads(cleaned_class)
-                intent = class_data.get("intent", "unrelated")
-            except Exception as e:
-                logger.error(f"Failed to classify pending action verbal response: {e}")
-                intent = "unrelated"
-
-            if intent == "confirm":
+            if is_confirm:
                 await redis_client.delete(pending_key)
-                logger.info(
-                    f"[TIMING] Step 1: Handled confirmed pending action - Time: {time.perf_counter() - start_step:.4f}s"
-                )
-                return await self.execute_approved_mutation(
+                result = await self._execute_tool(
                     pending_data["action_type"],
                     {
                         "product_id": pending_data.get("product_id", ""),
                         "quantity": pending_data.get("quantity", 1),
                     },
                 )
+                return await self._format_response(user_message, result)
 
-            if intent == "deny":
+            if is_deny:
                 await redis_client.delete(pending_key)
-                cancel_text = "I've cancelled that action."
                 await append_message_to_session(
                     str(self.session_id), "user", user_message
                 )
                 await append_message_to_session(
-                    str(self.session_id), "assistant", cancel_text
-                )
-                logger.info(
-                    f"[TIMING] Step 1: Handled denied pending action - Time: {time.perf_counter() - start_step:.4f}s"
+                    str(self.session_id), "assistant", "Cancelled."
                 )
                 return {
                     "type": "response",
-                    "text": cancel_text,
-                    "navigate_to": None,
-                    "navigate_label": None,
+                    "text": "Cancelled that action.",
                     "options": None,
-                    "free_input_allowed": False,
                 }
 
-            # Unrelated turn: clear pending state and fall through to normal execution
+            # Fall through for other messages
             await redis_client.delete(pending_key)
 
-        logger.info(
-            f"[TIMING] Step 1: Checked pending action - Time: {time.perf_counter() - start_step:.4f}s"
-        )
-
-        # Check for multi-turn conversation state
-        state_key = f"chat:session:{self.session_id}:state"
-        state_data_str = await redis_client.get(state_key)
-
-        if state_data_str:
-            state_data = json.loads(state_data_str)
-            state_type = state_data.get("type", "normal")
-
-            if state_type == "awaiting_option_response":
-                await redis_client.delete(state_key)
-
-            elif state_type == "awaiting_confirmation":
-                pass
-
-        # 1. Load user's persistent facts (with caching)
-        start_step = time.perf_counter()
-        facts_str = await self._get_facts()
-
-        # 2. Run fact classifier turn-by-turn
-        await classify_and_store_fact(self.db, self.user_id, user_message)
-        logger.info(
-            f"[TIMING] Step 2: Fact retrieval & memory classification - Time: {time.perf_counter() - start_step:.4f}s"
-        )
-
-        # 3. Load Chat History from Redis
-        start_step = time.perf_counter()
-        history = await get_session_history(str(self.session_id))
-        history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in history])
-
-        # 4. Quick scope check - detect out-of-scope queries early
-        scope_check_prompt = f"""Determine if the following user query is related to grocery shopping, product management, order management, account/profile management, or general assistance within a grocery app.
-
-User query: "{user_message}"
-
-Return JSON ONLY:
-{{
-  "in_scope": true or false,
-  "reason": "Brief explanation if out of scope, or empty string if in scope"
-}}"""
-        scope_check = None
-        try:
-            scope_response = await call_llm(
-                system_prompt="You are a precise scope classifier.",
-                user_prompt=scope_check_prompt,
-                temperature=0.0,
-                max_tokens=128,
-                call_type="scope_check",
+        # Check for deterministic fast path (0ms LLM bypass for button clicks and direct commands)
+        fast_result = await self._check_fast_path(user_message)
+        if fast_result is not None:
+            total_time = time.perf_counter() - turn_start_time
+            logger.info(
+                f"[FAST PATH] Executed turn in {total_time:.4f}s without LLM call!"
             )
-            scope_data = json.loads(extract_json_from_response(scope_response))
-            if scope_data.get("in_scope") is False:
-                scope_check = scope_data.get(
-                    "reason", "That's outside my capabilities."
-                )
-        except Exception as e:
-            logger.debug(f"Scope check failed, proceeding normally: {e}")
+            await append_message_to_session(str(self.session_id), "user", user_message)
+            await append_message_to_session(
+                str(self.session_id), "assistant", fast_result.get("text", "")
+            )
+            return fast_result
 
-        logger.info(
-            f"[TIMING] Step 3: History loading & Scope check - Time: {time.perf_counter() - start_step:.4f}s"
+        # Step 1: Classify intent + extract params (single LLM call)
+        step_start = time.perf_counter()
+        facts_str = await self._get_facts()
+        history = await get_session_history(str(self.session_id))
+        history_str = "\n".join(
+            [f"{msg['role']}: {msg['content']}" for msg in history[-6:]]
         )
 
-        if scope_check:
-            response_text = f"I'm a grocery shopping assistant, so I can't help with that. {scope_check} Is there anything related to our grocery catalog, your cart, orders, or account that I can assist you with?"
+        tool_descs = "\n".join(
+            [f"  - {name}: {desc}" for name, desc in TOOL_DESCRIPTIONS.items()]
+        )
+
+        intent_response = await call_llm(
+            system_prompt="You are a precise intent classifier.",
+            user_prompt=INTENT_PROMPT.format(
+                tool_descriptions=tool_descs,
+                facts=facts_str,
+                history=history_str,
+            )
+            + f"\n\nUser message: '{user_message}'",
+            temperature=0.0,
+            max_tokens=1024,
+            call_type="intent_classifier",
+        )
+
+        # Handle empty/error intent response
+        if not intent_response:
+            return {
+                "type": "response",
+                "text": "I had trouble understanding that. Could you rephrase your request?",
+                "options": None,
+            }
+
+        # Safely parse intent JSON
+        try:
+            extracted = extract_json_from_response(intent_response)
+            intent_data = json.loads(extracted)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(
+                f"Failed to parse intent response: {e}. Response was: '{intent_response[:200]}'"
+            )
+            # Retry once
+            intent_response_retry = await call_llm(
+                system_prompt="You are a precise intent classifier. Output ONLY valid JSON.",
+                user_prompt=INTENT_PROMPT.format(
+                    tool_descriptions=tool_descs,
+                    facts=facts_str,
+                    history=history_str,
+                )
+                + f"\n\nUser message: '{user_message}'",
+                temperature=0.0,
+                max_tokens=512,
+                call_type="intent_classifier_retry",
+            )
+            if intent_response_retry:
+                try:
+                    extracted = extract_json_from_response(intent_response_retry)
+                    intent_data = json.loads(extracted)
+                except (json.JSONDecodeError, ValueError):
+                    return {
+                        "type": "response",
+                        "text": "I had trouble understanding that. Could you rephrase?",
+                        "options": None,
+                    }
+            else:
+                return {
+                    "type": "response",
+                    "text": "I had trouble understanding that. Could you rephrase?",
+                    "options": None,
+                }
+
+        selected_tool = intent_data.get("tool", "out_of_scope")
+        params = intent_data.get("params", {})
+        fact_to_remember = intent_data.get("fact_to_remember")
+        fact_category = intent_data.get("fact_category")
+
+        logger.info(
+            f"[TIMING] Step 1: Intent classification - Time: {time.perf_counter() - step_start:.4f}s (tool: {selected_tool})"
+        )
+
+        # Handle out of scope immediately
+        if selected_tool == "out_of_scope":
+            response_text = "I'm your GroceryGenie shopping assistant! I can help you find products, manage your cart, check orders, manage delivery addresses, or handle seller operations. How can I assist you with your groceries today?"
             await append_message_to_session(str(self.session_id), "user", user_message)
             await append_message_to_session(
                 str(self.session_id), "assistant", response_text
             )
-            logger.info(
-                f"[TIMING] Total turn execution time (out of scope): {time.perf_counter() - turn_start_time:.4f}s"
-            )
-            return {
-                "type": "response",
-                "text": response_text,
-                "navigate_to": None,
-                "navigate_label": None,
-                "options": None,
-                "free_input_allowed": False,
-            }
+            return {"type": "response", "text": response_text, "options": None}
 
-        # 5. Decompose user message into sub-goals
-        start_step = time.perf_counter()
-        facts_context = facts_str if facts_str else "None"
-        history_context = history_str if history_str else "None"
+        # Store fact if found
+        if (
+            fact_to_remember
+            and isinstance(fact_to_remember, str)
+            and fact_to_remember.strip()
+        ):
+            await self._store_fact(fact_to_remember, fact_category)
 
-        decomposition_prompt = DECOMPOSITION_SYSTEM_PROMPT.format(
-            facts=facts_context, history=history_context
-        )
+        # Handle quantity-pending for add_to_cart
+        if selected_tool == "add_to_cart":
+            quantity = params.get("quantity")
+            if quantity is None:
+                # User didn't specify quantity, need to ask
+                product_id = params.get("product_id", "")
+                return await self._ask_for_quantity(product_id, user_message)
 
-        try:
-            decomp_response = await call_llm(
-                system_prompt="You are a precise task decomposer.",
-                user_prompt=f"Decompose this request: '{user_message}'\n\nContext:\n{decomposition_prompt}",
-                temperature=0.0,
-                max_tokens=512,
-                call_type="decomposition",
-            )
-
-            cleaned_decomp = extract_json_from_response(decomp_response)
-            subgoals = json.loads(cleaned_decomp)
-        except Exception as e:
-            logger.error(f"Orchestrator failed to decompose query: {e}")
-            subgoals = []
-
+        # Step 2: Execute tool
+        step_start = time.perf_counter()
+        result = await self._execute_tool(selected_tool, params)
         logger.info(
-            f"[TIMING] Step 4: Subgoal decomposition - Time: {time.perf_counter() - start_step:.4f}s (spawning {len(subgoals)} subgoals)"
+            f"[TIMING] Step 2: Tool execution ({selected_tool}) - Time: {time.perf_counter() - step_start:.4f}s"
         )
 
-        # 5. Initialize Langfuse Trace (safe)
-        trace = _safe_langfuse_trace(
-            name="grocerygenie-orchestrator-turn",
-            user_id=str(self.user_id),
-            session_id=str(self.session_id),
-            input=user_message,
-        )
+        # Check if search returned too_many results (narrowing needed)
+        if isinstance(result, dict) and result.get("too_many"):
+            return await self._handle_too_many_results(result, user_message)
 
-        # 6. Execute Subgoal DAG
-        start_step = time.perf_counter()
-        worker_classes = {
-            "ProductQueryWorker": ProductQueryWorker,
-            "DietaryFactWorker": DietaryFactWorker,
-            "OrderStatusWorker": OrderStatusWorker,
-            "CartActionWorker": CartActionWorker,
-            "ExplainerWorker": ExplainerWorker,
-            "StoreLayoutWorker": StoreLayoutWorker,
-            "SellerDashboardWorker": SellerDashboardWorker,
-            "AddressWorker": AddressWorker,
-            "CheckoutWorker": CheckoutWorker,
-            "ProfileWorker": ProfileWorker,
-            "SellerProductWorker": SellerProductWorker,
-        }
-
-        context = {
-            "db": self.db,
-            "user_id": self.user_id,
-            "user_role": self.user_role,
-            "user_facts": facts_str,
-        }
-
-        async def worker_runner(
-            subgoal: dict[str, Any], results: dict[str, Any]
-        ) -> Any:
-            worker_type = subgoal["type"]
-            goal_text = subgoal["goal"]
-            subgoal_id = subgoal["id"]
-
-            if worker_type not in worker_classes:
-                raise ValueError(f"Unknown worker type: {worker_type}")
-
-            span = _safe_langfuse_span(
-                trace,
-                name=f"worker-{worker_type}-{subgoal_id}",
-                input=goal_text,
-            )
-
-            worker_inst = worker_classes[worker_type](context, results)
-
-            logger.info(
-                f"[TIMING] Subgoal {subgoal_id} ({worker_type}) starting: '{goal_text}'"
-            )
-            worker_start = time.perf_counter()
-            retries = 2
-            while retries >= 0:
-                try:
-                    res = await worker_inst.run(goal_text)
-                    span.end(output=str(res))
-                    elapsed = time.perf_counter() - worker_start
-                    logger.info(
-                        f"[TIMING] Subgoal {subgoal_id} ({worker_type}) finished in {elapsed:.4f}s"
-                    )
-                    return res
-                except Exception as exc:
-                    if retries == 0:
-                        span.end(output=f"Error after retries: {exc}", level="ERROR")
-                        elapsed = time.perf_counter() - worker_start
-                        logger.error(
-                            f"[TIMING] Subgoal {subgoal_id} ({worker_type}) failed after retries in {elapsed:.4f}s: {exc}"
-                        )
-                        raise
-                    retries -= 1
-                    logger.warning(
-                        f"Worker {worker_type} failed, retrying... ({retries} left)"
-                    )
-            return None
-
-        # Progress callback for logging worker progress
-        async def progress_callback(message: str) -> None:
-            logger.debug(f"DAG Progress: {message}")
-
-        dag_results = await execute_subgoal_dag(
-            subgoals,
-            worker_runner,
-            context,
-            progress_callback=progress_callback,
-        )
+        # Step 3: Format response
+        step_start = time.perf_counter()
+        response = await self._format_response(user_message, result)
         logger.info(
-            f"[TIMING] Step 5: Executing subgoal DAG - Time: {time.perf_counter() - start_step:.4f}s"
+            f"[TIMING] Step 3: Response formatting - Time: {time.perf_counter() - step_start:.4f}s"
         )
 
-        # 7. Check if any worker proposed a sensitive cart/checkout/profile mutation
-        start_step = time.perf_counter()
-        proposed_mutation: dict[str, Any] | None = None
-        for res in dag_results.values():
-            if res.get("status") == "success" and isinstance(res.get("output"), dict):
-                output = res["output"]
-                if output.get("needs_permission"):
-                    proposed_mutation = output
-                    break
-
-        logger.info(
-            f"[TIMING] Step 6: Checked proposed mutations - Time: {time.perf_counter() - start_step:.4f}s"
-        )
-
-        # 8. Emit permission request if needed
-        if proposed_mutation:
-            pending_key = f"chat:session:{self.session_id}:pending_action"
-            await redis_client.set(
-                pending_key,
-                json.dumps(
-                    {
-                        "action_type": proposed_mutation.get(
-                            "action_type", proposed_mutation.get("action", "unknown")
-                        ),
-                        "product_id": proposed_mutation.get("product_id", ""),
-                        "quantity": proposed_mutation.get("quantity", 1),
-                        "summary": proposed_mutation["summary"],
-                    }
-                ),
-                ex=600,
-            )
-
-            await append_message_to_session(str(self.session_id), "user", user_message)
-            await append_message_to_session(
-                str(self.session_id),
-                "assistant",
-                f"[Permission Required] {proposed_mutation['summary']}",
-            )
-
-            trace.update(output="PAUSED: Permission Required")
-            logger.info(
-                f"[TIMING] Total turn execution time (permission paused): {time.perf_counter() - turn_start_time:.4f}s"
-            )
-
-            return {
-                "type": "permission_request",
-                "action": proposed_mutation.get(
-                    "action_type", proposed_mutation.get("action", "unknown")
-                ),
-                "summary": proposed_mutation["summary"],
-                "payload": proposed_mutation.get("payload", proposed_mutation),
-            }
-
-        # 9. Perform Synthesis
-        start_step = time.perf_counter()
-        results_str = json.dumps(dag_results, indent=2)
-        synthesis_prompt = SYNTHESIS_SYSTEM_PROMPT.format(
-            facts=facts_context, query=user_message, results_context=results_str
-        )
-
-        try:
-            synthesis_response = await call_llm(
-                system_prompt="You are a helpful synthesizer.",
-                user_prompt=synthesis_prompt,
-                temperature=0.2,
-                max_tokens=512,
-                call_type="synthesis",
-            )
-
-            cleaned_synth = extract_json_from_response(synthesis_response)
-            synth_data = json.loads(cleaned_synth)
-
-            # Handle structured options
-            if synth_data.get("options") and len(synth_data["options"]) > 0:
-                # Store state so next turn can handle the option response
-                state_key = f"chat:session:{self.session_id}:state"
-                await redis_client.set(
-                    state_key,
-                    json.dumps(
-                        {
-                            "type": "awaiting_option_response",
-                            "question": synth_data.get("text", ""),
-                            "options": synth_data["options"],
-                        }
-                    ),
-                    ex=600,
-                )
-
-                response_data = {
-                    "type": "options_response",
-                    "text": synth_data["text"],
-                    "options": synth_data["options"],
-                    "free_input_allowed": synth_data.get("free_input_allowed", True),
-                    "navigate_to": synth_data.get("navigate_to"),
-                    "navigate_label": synth_data.get("navigate_label"),
-                }
-            else:
-                response_data = {
-                    "type": "response",
-                    "text": synth_data["text"],
-                    "navigate_to": synth_data.get("navigate_to"),
-                    "navigate_label": synth_data.get("navigate_label"),
-                    "options": None,
-                    "free_input_allowed": False,
-                }
-
-        except Exception as e:
-            logger.error(f"Failed to synthesize final answer: {e}")
-            response_data = {
-                "type": "response",
-                "text": "I processed your request, but was unable to format the final answer. How else can I help you?",
-                "navigate_to": None,
-                "navigate_label": None,
-                "options": None,
-                "free_input_allowed": False,
-            }
-
-        logger.info(
-            f"[TIMING] Step 7: Answer synthesis - Time: {time.perf_counter() - start_step:.4f}s"
-        )
-
-        # 10. Update Redis Session Buffer
-        start_step = time.perf_counter()
+        # Store in session
         await append_message_to_session(str(self.session_id), "user", user_message)
         await append_message_to_session(
-            str(self.session_id), "assistant", response_data["text"]
-        )
-
-        trace.update(output=response_data["text"])
-        logger.info(
-            f"[TIMING] Step 8: Updated session buffer - Time: {time.perf_counter() - start_step:.4f}s"
+            str(self.session_id), "assistant", response.get("text", "")
         )
 
         total_time = time.perf_counter() - turn_start_time
         logger.info(f"[TIMING] Total turn execution time: {total_time:.4f}s")
 
-        return response_data
+        return response
 
-    async def execute_approved_mutation(
-        self, action_type: str, payload: dict[str, Any]
+    async def _ask_for_quantity(
+        self, product_id: str, original_query: str
     ) -> dict[str, Any]:
-        """Executes a mutation after user approval. Supports both cart and profile actions."""
-        logger.info(f"Orchestrator executing approved mutation: {action_type}...")
+        """Ask the user how many of the product they want to add."""
+        # Try to look up the product name
+        product_name = "this item"
+        if product_id and product_id != "":
+            try:
+                from uuid import UUID
 
-        trace = _safe_langfuse_trace(
-            name="grocerygenie-execute-mutation",
-            user_id=str(self.user_id),
-            session_id=str(self.session_id),
-            input=f"approved_mutation: {action_type}",
+                from sqlalchemy import select
+
+                from app.db.models.product import Product
+
+                product_uuid = UUID(product_id)
+                p_res = await self.db.execute(
+                    select(Product).where(Product.id == product_uuid)
+                )
+                product = p_res.scalar_one_or_none()
+                if product:
+                    product_name = product.name
+            except (ValueError, Exception):
+                pass
+
+        # Store context for when user responds with quantity
+        q_ctx = {
+            "product_id": product_id,
+            "original_query": original_query,
+            "product_name": product_name,
+        }
+        self._pending_quantity_context = q_ctx
+        redis_client = get_redis_client()
+        await redis_client.set(
+            f"chat:session:{self.session_id}:pending_quantity",
+            json.dumps(q_ctx),
+            ex=300,
         )
 
+        # Zero-LLM: build quantity card directly in Python
+        return {
+            "type": "options_response",
+            "text": f"How many {product_name} would you like to add?",
+            "options": [
+                {"label": "1", "value": "1", "description": "Single item"},
+                {"label": "2", "value": "2", "description": "Two items"},
+                {"label": "3", "value": "3", "description": "Three items"},
+                {"label": "5", "value": "5", "description": "Five items"},
+            ],
+            "free_input_allowed": True,
+        }
+
+    async def _handle_quantity_response(self, user_message: str) -> dict[str, Any]:
+        """Handle user's response to quantity question."""
+        context = self._pending_quantity_context
+        self._pending_quantity_context = None
+        assert context is not None  # nosec: type guard for mypy
+
+        product_id = context["product_id"]
+        original_query = context["original_query"]
+
+        # Try to parse the user's response as a number
+        quantity = 1
         try:
-            # Handle role/profile mutations
-            if action_type in ("switch_to_seller", "switch_to_customer", "switch_role"):
-                new_role = (
-                    UserRole.seller if "seller" in action_type else UserRole.customer
-                )
-                from app.db.models.user import User
+            # Extract numeric value from the message
+            numbers = re.findall(r"\d+", user_message.strip())
+            if numbers:
+                quantity = int(numbers[0])
+                if quantity < 1:
+                    quantity = 1
+                elif quantity > 100:
+                    quantity = 100
+        except (ValueError, IndexError):
+            quantity = 1
 
-                user_result = await self.db.execute(
-                    select(User).where(User.id == self.user_id)
+        # Execute add_to_cart with the specified quantity
+        result = await self._execute_tool(
+            "add_to_cart",
+            {
+                "product_id": product_id,
+                "quantity": quantity,
+            },
+        )
+
+        return await self._format_response(original_query, result)
+
+    async def _handle_too_many_results(
+        self, result: dict[str, Any], original_query: str
+    ) -> dict[str, Any]:
+        """Handle too many search results by asking user to narrow down."""
+        # Store narrowing context for when user responds
+        n_ctx = {
+            "original_query": original_query,
+            "categories": result.get("categories", []),
+            "price_range": result.get("price_range", {}),
+            "product_names": result.get("product_names", []),
+            "count": result.get("count", 0),
+        }
+        self._narrowing_context = n_ctx
+        redis_client = get_redis_client()
+        await redis_client.set(
+            f"chat:session:{self.session_id}:narrowing_context",
+            json.dumps(n_ctx),
+            ex=300,
+        )
+
+        # Zero-LLM: build narrowing card directly in Python
+        count = result.get("count", 0)
+        categories = result.get("categories", [])
+        price_range = result.get("price_range", {})
+        price_min = price_range.get("min", 0)
+        price_max = price_range.get("max", 0)
+
+        options: list[dict[str, Any]] = []
+        # Category quick-filter chips
+        for cat in categories[:6]:
+            options.append(
+                {
+                    "label": cat.title(),
+                    "value": f"category:{cat}",
+                    "description": "Filter by category",
+                }
+            )
+        # Price range chips
+        if price_max > 0:
+            mid = (price_min + price_max) / 2
+            options.append(
+                {
+                    "label": f"Under ${mid:.0f}",
+                    "value": f"max_price:{mid:.2f}",
+                    "description": "Budget friendly",
+                }
+            )
+            options.append(
+                {
+                    "label": f"${mid:.0f} – ${price_max:.0f}",
+                    "value": f"min_price:{mid:.2f}",
+                    "description": "Premium range",
+                }
+            )
+
+        return {
+            "type": "options_response",
+            "text": f"I found {count} products matching your search. Which type are you looking for?",
+            "options": options or None,
+            "free_input_allowed": True,
+        }
+
+    async def _handle_narrowing_response(self, user_message: str) -> dict[str, Any]:
+        """Handle user's narrowing response by doing a refined search."""
+        context = self._narrowing_context
+        self._narrowing_context = None
+        assert context is not None  # nosec: type guard for mypy
+
+        original_query = context["original_query"]
+
+        # Parse structured chip values (category:X / max_price:X / min_price:X)
+        tool_params: dict[str, Any] = {"query": original_query}
+        if user_message.startswith("category:"):
+            tool_params["category"] = user_message.split("category:", 1)[1].strip()
+        elif user_message.startswith("max_price:"):
+            with contextlib.suppress(ValueError):
+                tool_params["max_price"] = float(
+                    user_message.split("max_price:", 1)[1].strip()
                 )
-                user = user_result.scalar_one_or_none()
-                if user:
-                    user.role = new_role
-                    await self.db.commit()
-                    self.user_role = new_role
-                    response_text = (
-                        f"Your role has been switched to '{new_role.value}'."
+        elif user_message.startswith("min_price:"):
+            with contextlib.suppress(ValueError):
+                tool_params["min_price"] = float(
+                    user_message.split("min_price:", 1)[1].strip()
+                )
+        else:
+            # Plain text: append to query
+            tool_params["query"] = f"{original_query} {user_message}".strip()
+
+        # Re-run the search with refined params
+        result = await self._execute_tool("search_products", tool_params)
+
+        # If still too many results, ask to narrow down again
+        if isinstance(result, dict) and result.get("too_many"):
+            return await self._handle_too_many_results(result, original_query)
+
+        # Format final result
+        response = await self._format_response(user_message, result)
+
+        # Store in session
+        await append_message_to_session(str(self.session_id), "user", user_message)
+        await append_message_to_session(
+            str(self.session_id), "assistant", response.get("text", "")
+        )
+
+        return response
+
+    async def _store_fact(self, fact_text: str, fact_category: str | None) -> None:
+        """Store a persistent fact for the user."""
+        try:
+            from sqlalchemy import select
+
+            from app.db.models.enums import FactCategory
+            from app.db.models.memory import PersistentFact
+
+            dup = await self.db.execute(
+                select(PersistentFact).where(
+                    PersistentFact.user_id == self.user_id,
+                    PersistentFact.fact_text.ilike(fact_text.strip()),
+                )
+            )
+            if not dup.scalar_one_or_none():
+                try:
+                    cat = (
+                        FactCategory(fact_category)
+                        if fact_category
+                        else FactCategory.other
                     )
-                else:
-                    response_text = "User not found."
-                trace.update(output=response_text)
-                await append_message_to_session(
-                    str(self.session_id), "assistant", response_text
+                except ValueError:
+                    cat = FactCategory.other
+                fact = PersistentFact(
+                    user_id=self.user_id, fact_text=fact_text.strip(), category=cat
                 )
-                return {"type": "response", "text": response_text}
-
-            # Handle create_product mutation
-            if action_type == "create_product":
-                from decimal import Decimal
-
-                from app.db.models.product import Product
-
-                prod_data = payload.get("product_data", payload)
-                product = Product(
-                    seller_id=self.user_id,
-                    name=prod_data.get("name", "Unknown Product"),
-                    description=prod_data.get("description", ""),
-                    category=prod_data.get("category", "General"),
-                    price=Decimal(str(prod_data.get("price", 0))),
-                    stock=prod_data.get("stock", 0),
-                )
-                self.db.add(product)
+                self.db.add(fact)
                 await self.db.commit()
-                await self.db.refresh(product)
-                response_text = (
-                    f"Product '{product.name}' has been created successfully."
+                self._facts_cache = None
+        except Exception as e:
+            logger.warning(f"Failed to store fact: {e}")
+
+    async def _check_fast_path(self, user_message: str) -> dict[str, Any] | None:
+        """Deterministically check if message can be handled in 0ms without an LLM call."""
+        msg = user_message.strip()
+        msg_lower = msg.lower()
+
+        # 1. Handle add_<product_id>
+        if msg.startswith("add_"):
+            pid = msg.replace("add_", "").strip()
+            if pid:
+                result = await self._execute_tool(
+                    "add_to_cart", {"product_id": pid, "quantity": 1}
                 )
-                trace.update(output=response_text)
-                await append_message_to_session(
-                    str(self.session_id), "assistant", response_text
+                return await self._format_response(user_message, result)
+
+        # 2. Handle remove_<product_id>
+        if msg.startswith("remove_"):
+            pid = msg.replace("remove_", "").strip()
+            if pid:
+                result = await self._execute_tool(
+                    "remove_from_cart", {"product_id": pid}
                 )
-                return {"type": "response", "text": response_text}
+                return await self._format_response(user_message, result)
 
-            # Handle update_product mutation
-            if action_type == "update_product":
-                from decimal import Decimal
+        # 3. Handle view_<product_id>
+        if msg.startswith("view_"):
+            pid = msg.replace("view_", "").strip()
+            if pid:
+                try:
+                    from uuid import UUID
 
-                from app.db.models.product import Product
+                    from sqlalchemy import select
 
-                product_id_str = payload.get("product_id", "")
-                if not product_id_str:
-                    return {
-                        "type": "response",
-                        "text": "Product ID is required for update.",
-                    }
-                product_id = uuid.UUID(product_id_str)
-                p_res = await self.db.execute(
-                    select(Product).where(
-                        Product.id == product_id, Product.seller_id == self.user_id
+                    from app.db.models.product import Product
+
+                    product_uuid = UUID(pid)
+                    p_res = await self.db.execute(
+                        select(Product).where(Product.id == product_uuid)
                     )
-                )
-                db_product = p_res.scalar_one_or_none()
-                if not db_product:
-                    return {"type": "response", "text": "Product not found."}
-                prod_data = payload.get("product_data", payload)
-                if prod_data.get("name"):
-                    db_product.name = prod_data["name"]
-                if prod_data.get("description") is not None:
-                    db_product.description = prod_data["description"]
-                if prod_data.get("price") is not None:
-                    db_product.price = Decimal(str(prod_data["price"]))
-                if prod_data.get("stock") is not None:
-                    db_product.stock = prod_data["stock"]
-                await self.db.commit()
-                response_text = f"Product '{db_product.name}' has been updated."
-                trace.update(output=response_text)
-                await append_message_to_session(
-                    str(self.session_id), "assistant", response_text
-                )
-                return {"type": "response", "text": response_text}
+                    product = p_res.scalar_one_or_none()
+                    if product:
+                        return {
+                            "type": "options_response",
+                            "text": f"**{product.name}** — ${float(product.price):.2f}\n{product.description}",
+                            "options": [
+                                {
+                                    "label": product.name,
+                                    "value": str(product.id),
+                                    "description": f"${float(product.price):.2f} • Stock: {product.stock} • Rating: {float(product.avg_rating):.1f}⭐",
+                                    "actions": [
+                                        {
+                                            "label": "Add to Cart",
+                                            "value": f"add_{product.id}",
+                                        }
+                                    ],
+                                }
+                            ],
+                            "free_input_allowed": True,
+                        }
+                except Exception:
+                    pass  # nosec: B110 - UUID lookup failure is non-critical
 
-            # Handle cart actions (require product_id)
-            product_id_str = payload.get("product_id", "")
-            if not product_id_str:
+        # 4. Handle delete_address_<uuid>
+        if msg.startswith("delete_address_"):
+            aid = msg.replace("delete_address_", "").strip()
+            if aid:
+                result = await self._execute_tool(
+                    "manage_addresses", {"action": "delete", "address_id": aid}
+                )
+                return await self._format_response(user_message, result)
+
+        # 5. Handle set_default_address_<uuid>
+        if msg.startswith("set_default_address_"):
+            aid = msg.replace("set_default_address_", "").strip()
+            if aid:
+                result = await self._execute_tool(
+                    "manage_addresses",
+                    {
+                        "action": "update",
+                        "address_id": aid,
+                        "address_data": {"is_default": True},
+                    },
+                )
+                return await self._format_response(user_message, result)
+
+        # 6. Handle seller_deactivate_<uuid>
+        if msg.startswith("seller_deactivate_"):
+            pid = msg.replace("seller_deactivate_", "").strip()
+            if pid:
+                result = await self._execute_tool(
+                    "seller_delete_product", {"product_id": pid}
+                )
+                return await self._format_response(user_message, result)
+
+        # 7. Handle direct view_cart / cart / my cart
+        if msg_lower in (
+            "view_cart",
+            "cart",
+            "view cart",
+            "my cart",
+            "show cart",
+            "show my cart",
+        ):
+            result = await self._execute_tool("view_cart", {})
+            return await self._format_response(user_message, result)
+
+        # 8. Handle clear cart
+        if msg_lower in ("clear cart", "empty cart", "clear my cart", "remove all"):
+            result = await self._execute_tool("view_cart", {})
+            if isinstance(result, dict) and "items" in result:
+                for item in result["items"]:
+                    pid = item.get("product_id", "")
+                    if pid:
+                        await self._execute_tool(
+                            "remove_from_cart", {"product_id": pid}
+                        )
+                return {"type": "response", "text": "🗑️ Cart cleared.", "options": None}
+
+        # 9. Handle direct view_orders / orders / my orders
+        if msg_lower in (
+            "view_orders",
+            "orders",
+            "view orders",
+            "my orders",
+            "check my orders",
+            "order history",
+        ):
+            result = await self._execute_tool("view_orders", {})
+            return await self._format_response(user_message, result)
+
+        # 10. Handle direct addresses / my addresses
+        if msg_lower in (
+            "addresses",
+            "my addresses",
+            "view addresses",
+            "list addresses",
+            "saved addresses",
+        ):
+            result = await self._execute_tool("manage_addresses", {"action": "list"})
+            return await self._format_response(user_message, result)
+
+        # 11. Handle my preferences / facts
+        if msg_lower in (
+            "my preferences",
+            "my facts",
+            "view preferences",
+            "preferences",
+            "my dietary preferences",
+        ):
+            result = await self._execute_tool("view_facts", {})
+            return await self._format_response(user_message, result)
+
+        # 12. Handle seller catalog / my products
+        if msg_lower in (
+            "my products",
+            "seller catalog",
+            "list my products",
+            "view my products",
+            "my listings",
+        ):
+            result = await self._execute_tool("seller_list_products", {})
+            return await self._format_response(user_message, result)
+
+        # 13. Handle direct checkout / place order
+        if msg_lower in ("place_order", "checkout", "place order", "buy now"):
+            result = await self._execute_tool("place_order", {})
+            return await self._format_response(user_message, result)
+
+        return None
+
+    async def _execute_tool(self, tool_name: str, params: dict[str, Any]) -> Any:
+        """Execute a tool by name with params. All pure Python, no LLM calls."""
+        tool_params = dict(params)
+        tool_params["db"] = self.db
+        tool_params["user_id"] = self.user_id
+
+        if tool_name in TOOL_REGISTRY:
+            try:
+                return await TOOL_REGISTRY[tool_name](**tool_params)
+            except Exception as e:
+                logger.error(f"Tool {tool_name} failed: {e}")
+                safe_message = _sanitize_error_message(str(e))
+                return {"success": False, "message": safe_message}
+        else:
+            return {"success": False, "message": f"Unknown tool: {tool_name}"}
+
+    async def _format_response(self, query: str, results: Any) -> dict[str, Any]:
+        """Format tool results into a natural response with optional action options."""
+        # If the tool already returned a message (for direct actions like add_to_cart), use it directly
+        if isinstance(results, dict) and "message" in results and "success" in results:
+            if results.get("success"):
+                return {"type": "response", "text": results["message"], "options": None}
+            return {"type": "response", "text": results["message"], "options": None}
+
+        # Fast 0ms Python formatting for product lists (search_products)
+        if isinstance(results, list):
+            if not results:
                 return {
                     "type": "response",
-                    "text": "No product specified for this action.",
+                    "text": "No matching products were found in our store.",
+                    "options": None,
                 }
-
-            product_id = uuid.UUID(product_id_str)
-            quantity = payload.get("quantity", 1)
-
-            if action_type == "add_to_cart":
-                p_res = await self.db.execute(
-                    select(Product).where(Product.id == product_id)
-                )
-                db_product = p_res.scalar_one_or_none()
-                if not db_product or db_product.stock < quantity:
-                    return {
-                        "type": "response",
-                        "text": "Sorry, that product is no longer in stock.",
-                    }
-
-                cart_res = await self.db.execute(
-                    select(CartItem).where(
-                        CartItem.user_id == self.user_id,
-                        CartItem.product_id == product_id,
+            options = []
+            for p in results:
+                if isinstance(p, dict) and "name" in p and "id" in p:
+                    pid = p["id"]
+                    price_val = p.get("price", 0.0)
+                    stock_val = p.get("stock", 0)
+                    options.append(
+                        {
+                            "label": p["name"],
+                            "value": pid,
+                            "description": f"${price_val:.2f} • Stock: {stock_val}",
+                            "actions": [
+                                {"label": "Add to Cart", "value": f"add_{pid}"},
+                                {"label": "View Details", "value": f"view_{pid}"},
+                            ],
+                        }
                     )
-                )
-                cart_item = cart_res.scalar_one_or_none()
-                if cart_item:
-                    cart_item.quantity += quantity
-                else:
-                    cart_item = CartItem(
-                        user_id=self.user_id, product_id=product_id, quantity=quantity
-                    )
-                    self.db.add(cart_item)
+            count = len(results)
+            text = f"Found {count} matching product{'s' if count != 1 else ''}:"
+            return {
+                "type": "options_response" if options else "response",
+                "text": text,
+                "options": options if options else None,
+                "free_input_allowed": True,
+            }
 
-                await self.db.commit()
-                response_text = (
-                    f"I've added {quantity}x {db_product.name} to your cart."
-                )
-
-            elif action_type == "remove_from_cart":
-                await self.db.execute(
-                    delete(CartItem).where(
-                        CartItem.user_id == self.user_id,
-                        CartItem.product_id == product_id,
-                    )
-                )
-                await self.db.commit()
-                response_text = "I've removed that item from your cart."
-            else:
-                response_text = "I processed the approved action."
-
-            await append_message_to_session(
-                str(self.session_id), "assistant", response_text
-            )
-            trace.update(output=response_text)
-            return {"type": "response", "text": response_text}
-
-        except Exception as e:
-            logger.error(f"Failed to execute approved mutation: {e}")
-            trace.update(output=f"Error: {e}")
+        # If empty results
+        if isinstance(results, dict) and results.get("empty"):
             return {
                 "type": "response",
-                "text": f"I encountered an error trying to complete that action: {str(e)}",
+                "text": results.get("message", "No results found."),
+                "options": None,
             }
+
+        # ── Cart result ─────────────────────────────────────────────
+        if isinstance(results, dict) and "items" in results and "total" in results:
+            items = results["items"]
+            total = results["total"]
+            if not items:
+                return {
+                    "type": "response",
+                    "text": "Your cart is empty.",
+                    "options": None,
+                }
+            lines = [f"**🛒 Your Cart** (Total: **${total:.2f}**)\n"]
+            cart_options: list[dict[str, Any]] = []
+            for item in items:
+                pid = item.get("product_id", "")
+                name = item.get("name", "")
+                qty = item.get("quantity", 1)
+                price = item.get("price", 0.0)
+                subtotal = item.get("total", price * qty)
+                lines.append(f"• {name} × {qty} = ${subtotal:.2f}")
+                if pid:
+                    cart_options.append(
+                        {
+                            "label": f"{name} ×{qty}",
+                            "value": pid,
+                            "description": f"${price:.2f} each · Subtotal ${subtotal:.2f}",
+                            "actions": [
+                                {"label": "Remove", "value": f"remove_{pid}"},
+                            ],
+                        }
+                    )
+            cart_options.append(
+                {
+                    "label": "✅ Checkout",
+                    "value": "checkout",
+                    "description": f"Place order · ${total:.2f} total",
+                }
+            )
+            return {
+                "type": "options_response",
+                "text": "\n".join(lines),
+                "options": cart_options,
+                "free_input_allowed": True,
+            }
+
+        # ── Orders result ────────────────────────────────────────────
+        if (
+            isinstance(results, list)
+            and results
+            and isinstance(results[0], dict)
+            and "status" in results[0]
+            and "total" in results[0]
+        ):
+            options = []
+            lines = [
+                f"**📦 Your Orders** ({len(results)} order{'s' if len(results) != 1 else ''})\n"
+            ]
+            for order in results:
+                oid = order.get("id", "")[:8]
+                status = order.get("status", "").upper()
+                total = order.get("total", 0.0)
+                created = (order.get("created_at") or "")[:10]
+                items_list = order.get("items", [])
+                item_names = ", ".join(
+                    f"{i.get('product_name', '?')} ×{i.get('quantity', 1)}"
+                    for i in items_list[:3]
+                )
+                if len(items_list) > 3:
+                    item_names += f" +{len(items_list) - 3} more"
+                lines.append(f"• #{oid}… · {status} · ${total:.2f} · {created}")
+                options.append(
+                    {
+                        "label": f"#{oid}… — {status}",
+                        "value": order.get("id", ""),
+                        "description": item_names or "No items",
+                    }
+                )
+            return {
+                "type": "options_response",
+                "text": "\n".join(lines),
+                "options": options,
+                "free_input_allowed": True,
+            }
+
+        # ── Addresses result ─────────────────────────────────────────
+        if isinstance(results, dict) and "addresses" in results:
+            addresses = results["addresses"]
+            if not addresses:
+                return {
+                    "type": "response",
+                    "text": 'You have no saved addresses. You can add one by saying "add address".',
+                    "options": None,
+                }
+            options = []
+            lines = [f"**📍 Your Addresses** ({len(addresses)})\n"]
+            for addr in addresses:
+                aid = addr.get("id", "")
+                label = addr.get("label") or ""
+                street = addr.get("street", "")
+                city = addr.get("city", "")
+                state = addr.get("state", "")
+                is_default = addr.get("is_default", False)
+                default_tag = " 🏠 Default" if is_default else ""
+                display = f"{label or street}, {city}, {state}{default_tag}"
+                lines.append(f"• {display}")
+                options.append(
+                    {
+                        "label": label or street,
+                        "value": aid,
+                        "description": f"{street}, {city}, {state}{default_tag}",
+                        "actions": [
+                            {
+                                "label": "Set Default",
+                                "value": f"set_default_address_{aid}",
+                            },
+                            {"label": "Delete", "value": f"delete_address_{aid}"},
+                        ],
+                    }
+                )
+            options.append(
+                {
+                    "label": "➕ Add New Address",
+                    "value": "add_address",
+                    "description": "Save a delivery address",
+                }
+            )
+            return {
+                "type": "options_response",
+                "text": "\n".join(lines),
+                "options": options,
+                "free_input_allowed": True,
+            }
+
+        # ── Facts / preferences result ────────────────────────────────
+        if (
+            isinstance(results, list)
+            and results
+            and isinstance(results[0], dict)
+            and "fact_text" in results[0]
+        ):
+            lines = ["**🧠 Your Preferences & Facts**\n"]
+            for f in results:
+                cat = f.get("category", "other")
+                text = f.get("fact_text", "")
+                lines.append(f"• [{cat}] {text}")
+            return {"type": "response", "text": "\n".join(lines), "options": None}
+
+        # ── Seller catalog result ─────────────────────────────────────
+        if (
+            isinstance(results, list)
+            and results
+            and isinstance(results[0], dict)
+            and "is_active" in results[0]
+            and "sold_count" in results[0]
+        ):
+            active = [p for p in results if p.get("is_active")]
+            inactive = [p for p in results if not p.get("is_active")]
+            lines = [
+                f"**🏪 Your Products** ({len(active)} active, {len(inactive)} inactive)\n"
+            ]
+            options = []
+            for p in results:
+                pid = p.get("id", "")
+                name = p.get("name", "")
+                price = p.get("price", 0.0)
+                stock = p.get("stock", 0)
+                active_tag = "✅" if p.get("is_active") else "❌"
+                sold = p.get("sold_count", 0)
+                lines.append(
+                    f"• {active_tag} {name} — ${price:.2f} · Stock: {stock} · Sold: {sold}"
+                )
+                options.append(
+                    {
+                        "label": f"{active_tag} {name}",
+                        "value": pid,
+                        "description": f"${price:.2f} · Stock {stock} · {sold} sold",
+                        "actions": [
+                            {"label": "Edit", "value": f"seller_edit_{pid}"},
+                            {
+                                "label": "Deactivate",
+                                "value": f"seller_deactivate_{pid}",
+                            },
+                        ],
+                    }
+                )
+            options.append(
+                {
+                    "label": "➕ Create Product",
+                    "value": "seller_create",
+                    "description": "List a new product",
+                }
+            )
+            return {
+                "type": "options_response",
+                "text": "\n".join(lines),
+                "options": options,
+                "free_input_allowed": True,
+            }
+
+        results_str = json.dumps(results, indent=2)[:2000]  # Truncate for LLM context
+
+        # LLM fallback for any genuinely unstructured result (rare)
+        response_text = await call_llm(
+            system_prompt="You are a friendly grocery assistant.",
+            user_prompt=RESPONSE_PROMPT.format(query=query, results=results_str),
+            temperature=0.3,
+            max_tokens=512,
+            call_type="response_format",
+        )
+
+        if not response_text:
+            return {
+                "type": "response",
+                "text": "Here are the results.",
+                "options": None,
+            }
+
+        try:
+            formatted = json.loads(extract_json_from_response(response_text))
+            return {
+                "type": "options_response" if formatted.get("options") else "response",
+                "text": formatted.get("text", "Here are the results."),
+                "options": formatted.get("options"),
+                "free_input_allowed": True,
+            }
+        except (json.JSONDecodeError, KeyError):
+            clean_text = response_text[:1000]
+            return {"type": "response", "text": clean_text, "options": None}
+
+    async def execute_approved_mutation(
+        self, action: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Execute a pre-approved mutation (e.g., after user grants permission)."""
+        product_id = payload.get("product_id", "")
+        quantity = payload.get("quantity", 1)
+        result = await self._execute_tool(
+            action, {"product_id": product_id, "quantity": quantity}
+        )
+        return await self._format_response("", result)

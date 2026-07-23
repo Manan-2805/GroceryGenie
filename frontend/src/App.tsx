@@ -239,7 +239,7 @@ export const AppContent: React.FC = () => {
       </header>
 
       {/* Main Page Layout Wrapper */}
-      <main className="flex-1 w-full px-4 md:px-8 pb-24">
+      <main className="flex-1 w-full px-4 md:px-8 pb-24 h-screen overflow-hidden">
         <Routes>
           <Route
             path="/"

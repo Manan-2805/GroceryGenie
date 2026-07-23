@@ -15,12 +15,24 @@ import { useVoiceSession } from '../contexts/VoiceSessionContext';
 import { authService } from '../services/api';
 import { useUIStore } from '../store/uiStore';
 
+type OptionAction = {
+  label: string;
+  value: string;
+};
+
+type OptionItem = {
+  label: string;
+  value: string;
+  description?: string;
+  actions?: OptionAction[];
+};
+
 type Message = {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
-  type?: 'text' | 'permission' | 'options' | 'navigation' | 'action_card';
-  options?: { label: string; value: string; description?: string }[];
+  type?: 'text' | 'permission' | 'options' | 'navigation' | 'action_card' | 'status';
+  options?: OptionItem[];
   free_input_allowed?: boolean;
   navigate_to?: string;
   navigate_label?: string;
@@ -29,6 +41,7 @@ type Message = {
 
 type StreamEvent =
   | { type: 'delta'; text: string }
+  | { type: 'status'; status: string }
   | {
       type: 'permission_request';
       summary: string;
@@ -176,7 +189,29 @@ export const Agent: React.FC = () => {
             try {
               const data = JSON.parse(dataStr) as Partial<StreamEvent> & Record<string, unknown>;
 
-              if (data.type === 'delta' && typeof data.text === 'string') {
+              if (data.type === 'status' && typeof data.status === 'string') {
+                // Status update from orchestrator (show briefly)
+                const statusContent = data.status ?? '';
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  const lastMsg = updated[updated.length - 1];
+                  if (lastMsg && lastMsg.type === 'status') {
+                    updated[updated.length - 1] = { ...lastMsg, content: statusContent };
+                  } else {
+                    updated.push({
+                      id: nextId(),
+                      role: 'system',
+                      content: statusContent,
+                      type: 'status' as const,
+                    });
+                  }
+                  return updated;
+                });
+                // Auto-remove status after 3 seconds
+                window.setTimeout(() => {
+                  setMessages((prev) => prev.filter((m) => m.type !== 'status'));
+                }, 3000);
+              } else if (data.type === 'delta' && typeof data.text === 'string') {
                 assistantResponse += data.text;
                 // Update the last assistant message in real-time
                 setMessages((prev) => {
@@ -284,18 +319,18 @@ export const Agent: React.FC = () => {
     void sendTextMessage(textInput);
   };
 
-  const handleOptionSelect = (optionValue: string, freeText?: string) => {
-    setMessages((prev) => [
+  const [selectedOptionByMsgId, setSelectedOptionByMsgId] = useState<Record<string, string>>({});
+
+  const handleOptionSelect = (msgId: string, optionValue: string) => {
+    // Check if message options are already consumed
+    if (selectedOptionByMsgId[msgId] != null && selectedOptionByMsgId[msgId] !== '') return;
+
+    setSelectedOptionByMsgId((prev) => ({
       ...prev,
-      {
-        id: nextId(),
-        role: 'user',
-        content:
-          typeof freeText === 'string' && freeText.length > 0
-            ? `${optionValue}: ${freeText}`
-            : optionValue,
-      },
-    ]);
+      [msgId]: optionValue,
+    }));
+
+    // Send option as a direct text message (sendTextMessage handles adding the user message once)
     void sendTextMessage(optionValue);
   };
 
@@ -492,22 +527,91 @@ export const Agent: React.FC = () => {
                         </p>
                       )}
                       <div className="flex flex-col gap-2">
-                        {m.options.map((opt) => (
-                          <button
-                            key={opt.value}
-                            onClick={() => handleOptionSelect(opt.value)}
-                            className="w-full px-4 py-3 bg-white dark:bg-gray-800 hover:bg-purple-50 dark:hover:bg-purple-950/20 border dark:border-gray-700 rounded-xl text-left transition group"
-                          >
-                            <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                              {opt.label}
-                            </span>
-                            {typeof opt.description === 'string' && opt.description.length > 0 && (
-                              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                {opt.description}
-                              </p>
-                            )}
-                          </button>
-                        ))}
+                        {m.options.map((opt) => {
+                          const selectedValue = selectedOptionByMsgId[m.id];
+                          const isSelected = selectedValue === opt.value;
+                          const isCardConsumed = Boolean(selectedValue);
+
+                          if (isCardConsumed && !isSelected) {
+                            return (
+                              <div
+                                key={opt.value}
+                                className="w-full px-4 py-2 border rounded-xl text-left bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-800 opacity-40"
+                              >
+                                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                  {opt.label}
+                                </span>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div key={opt.value} className="w-full">
+                              {isSelected ? (
+                                <div className="w-full px-4 py-3 border rounded-xl text-left bg-purple-50 dark:bg-purple-950/30 border-purple-300 dark:border-purple-800">
+                                  <span className="text-[10px] text-purple-600 dark:text-purple-400 uppercase tracking-wider font-bold block mb-1">
+                                    ✓ Selected
+                                  </span>
+                                  <span className="text-sm font-semibold text-purple-900 dark:text-purple-200">
+                                    {opt.label}
+                                  </span>
+                                </div>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => handleOptionSelect(m.id, opt.value)}
+                                    disabled={isCardConsumed}
+                                    className="w-full px-4 py-3 border rounded-xl text-left transition bg-white dark:bg-gray-800 hover:bg-purple-50 dark:hover:bg-purple-950/20 border-gray-200 dark:border-gray-700"
+                                  >
+                                    <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                                      {opt.label}
+                                    </span>
+                                    {typeof opt.description === 'string' &&
+                                      opt.description.length > 0 && (
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                          {opt.description}
+                                        </p>
+                                      )}
+                                  </button>
+                                  {/* Quick action buttons */}
+                                  {opt.actions && opt.actions.length > 0 && (
+                                    <div className="flex gap-1.5 mt-1.5 px-1">
+                                      {opt.actions.map((action) => {
+                                        // Determine if this is a 'View Details' action - open in new tab
+                                        const isViewDetails =
+                                          action.label === 'View Details' &&
+                                          action.value.startsWith('view_');
+                                        if (isViewDetails) {
+                                          const productId = action.value.replace('view_', '');
+                                          return (
+                                            <button
+                                              key={action.value}
+                                              onClick={() =>
+                                                window.open(`/catalog/${productId}`, '_blank')
+                                              }
+                                              className="flex-1 px-2.5 py-1.5 bg-purple-100 dark:bg-purple-900/30 hover:bg-purple-200 dark:hover:bg-purple-800/40 text-purple-700 dark:text-purple-300 rounded-lg text-[11px] font-semibold transition"
+                                            >
+                                              {action.label}
+                                            </button>
+                                          );
+                                        }
+                                        return (
+                                          <button
+                                            key={action.value}
+                                            onClick={() => handleOptionSelect(m.id, action.value)}
+                                            className="flex-1 px-2.5 py-1.5 bg-purple-100 dark:bg-purple-900/30 hover:bg-purple-200 dark:hover:bg-purple-800/40 text-purple-700 dark:text-purple-300 rounded-lg text-[11px] font-semibold transition"
+                                          >
+                                            {action.label}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          );
+                        })}
                         {m.free_input_allowed === true && (
                           <div className="mt-2 pt-2 border-t dark:border-gray-700">
                             <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
@@ -517,9 +621,17 @@ export const Agent: React.FC = () => {
                               onSubmit={(e) => {
                                 e.preventDefault();
                                 const input = e.currentTarget.querySelector('input')?.value ?? '';
-                                if (input.trim().length > 0) {
-                                  handleOptionSelect(input.trim());
+                                if (input.trim().length > 0 && !isSending) {
+                                  // Send free text as a regular user message, NOT as an option
+                                  setMessages((prev) => [
+                                    ...prev,
+                                    { id: nextId(), role: 'user', content: input.trim() },
+                                  ]);
+                                  void sendTextMessage(input.trim());
                                 }
+                                // Clear the input after sending
+                                const inputEl = e.currentTarget.querySelector('input');
+                                if (inputEl) inputEl.value = '';
                               }}
                               className="flex gap-2"
                             >
@@ -527,11 +639,13 @@ export const Agent: React.FC = () => {
                                 type="text"
                                 placeholder="Type here..."
                                 maxLength={500}
+                                disabled={false}
                                 className="flex-1 px-3 py-2 border dark:border-gray-700 bg-white dark:bg-gray-800 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
                               />
                               <button
                                 type="submit"
-                                className="px-3 py-2 bg-purple-600 text-white rounded-lg text-xs font-bold hover:bg-purple-700 transition"
+                                disabled={isSending}
+                                className="px-3 py-2 bg-purple-600 text-white rounded-lg text-xs font-bold hover:bg-purple-700 transition disabled:bg-purple-400 disabled:cursor-not-allowed"
                               >
                                 Send
                               </button>
@@ -575,7 +689,9 @@ export const Agent: React.FC = () => {
                 </div>
               );
             })}
+            {/* Show dots only when sending AND no status message is active */}
             {isSending &&
+              !messages.some((m) => m.type === 'status') &&
               (messages.length === 0 ||
                 messages[messages.length - 1]?.role !== 'assistant' ||
                 messages[messages.length - 1]?.type !== 'text') && (
