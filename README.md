@@ -27,55 +27,38 @@ GroceryGenie is a **premium, voice-first intelligent grocery shopping assistant*
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Frontend (React + Vite)                       │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │
-│  │ Text Chat│  │Voice Chat│  │  Pages   │  │ Zustand Store │  │
-│  │ (SSE)    │  │ (WebSock)│  │(Catalog, │  │ + React Query │  │
-│  │          │  │          │  │ Cart,etc)│  │               │  │
-│  └────┬─────┘  └────┬─────┘  └──────────┘  └───────────────┘  │
-└───────┼──────────────┼─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Frontend (React + Vite)                                   │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────────────┐   │
+│  │ Text Chat│  │Voice Chat│  │  Pages   │  │ Zustand Store            │   │
+│  │ (SSE)    │  │ (WebSock)│  │(Catalog, │  │ + React Query            │   │
+│  │          │  │          │  │ Cart,etc)│  │                          │   │
+│  └────┬─────┘  └────┬─────┘  └──────────┘  └──────────────────────────┘   │
+└───────┼──────────────┼─────────────────────────────────────────────────────┘
         │              │
-┌───────▼──────────────▼─────────────────────────────────────────┐
-│                    Backend (FastAPI + Granian)                   │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │              Agent Orchestrator (Optimized)               │   │
-│  │  ┌────────────────┐  ┌──────────┐  ┌──────────────────┐  │  │
-│  │  │ 0ms Fast Path  │  │Single LLM│  │ Python Formatters│  │  │
-│  │  │ (13 patterns,  │  │ Router   │  │ (cart, orders,   │  │  │
-│  │  │  0 LLM calls)  │  │ (1 call) │  │  addresses, etc) │  │  │
-│  │  └────────────────┘  └──────────┘  └──────────────────┘  │  │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │                 Voice Pipeline                            │   │
-│  │  Mic → VAD (Silero) → ASR (Parakeet) → Agent → TTS (Piper)│  │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐   │
-│  │PostgreSQL│ │  Redis   │ │  Qdrant  │ │  Neo4j (Graph)   │   │
-│  │(BM25 SQL)│ │(Session) │ │(Vectors+ │ │ (Store Layout)   │   │
-│  │          │ │          │ │Auto-Sync)│ │                  │   │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-�   │
-│  │  │LLM Decomp│ │ DAG Exec │ │ Workers  │ │ Synthesis│   │   │
-│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘   │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │                 Voice Pipeline                            │   │
-│  │  Mic → VAD (Silero) → ASR (Parakeet) → Agent → TTS (Piper)│   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐   │
-│  │PostgreSQL│ │  Redis   │ │  Qdrant  │ │  Neo4j (Graph)   │   │
-│  │ (SQL)    │ │ (Session)│ │(Vectors) │ │ (Store Layout)   │   │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
+┌───────▼──────────────▼─────────────────────────────────────────────────────┐
+│                    Backend (FastAPI + Granian)                               │
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │              Agent Orchestrator (Optimized)                         │   │
+│  │  ┌──────────────────────┐  ┌──────────────┐  ┌──────────────────┐  │   │
+│  │  │ 0ms Fast Path        │  │ Single LLM   │  │ Python Tools     │  │   │
+│  │  │ (13+ patterns,       │  │ Router       │  │ (cart, orders,   │  │   │
+│  │  │  0 LLM calls)        │  │ (1 call)     │  │  addresses, etc) │  │   │
+│  │  └──────────────────────┘  └──────────────┘  └──────────────────┘  │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                 Voice Pipeline                                      │   │
+│  │  Mic → VAD (RMS) → ASR (Parakeet) → Agent → TTS (Piper)            │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────────────────┐   │
+│  │PostgreSQL│  │  Redis   │  │  Qdrant  │  │  Neo4j (Graph)         │   │
+│  │ (BM25)   │  │ (Session)│  │(Vectors+ │  │ (Store Layout)         │   │
+│  │          │  │          │  │Auto-Sync)│  │                        │   │
+│  └──────────┘  └──────────┘  └──────────┘  └────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -100,7 +83,7 @@ cd GroceryGenie
 cp .env.example .env.dev
 ```
 
-Fill in your `NIM_API_KEY` and any other required keys in `.env.dev`.
+Fill in your `LLM_PROVIDERS` (or `NIM_API_KEY`) and any other required keys in `.env.dev`.
 
 ### 2. Start Infrastructure
 
@@ -142,60 +125,19 @@ Open [http://localhost:5173](http://localhost:5173) to browse the app.
 
 ### 🤖 AI Assistant (Agent)
 - **Natural Language Understanding**: Ask questions, give commands in plain English
-- **Task Decomposition**: Complex requests broken into sub-goals with dependency DAG
+- **Single-shot Intent Classification**: One LLM call extracts tool + parameters
+- **Zero-LLM Fast Path**: 13+ common commands handled with 0 LLM calls via string matching
 - **Structured Options**: Agent can present clickable choices + free-form input
 - **Multi-turn Conversations**: Remembers context across turns
 - **Permission Gates**: Sensitive actions require explicit user approval
-- **Persistent Memory**: Learns user preferences and dietary restrictions
-
----
-
-## 🎮 Agent Task Examples
-
-Try these tasks with the AI assistant (both voice and text) to explore capabilities, from **easy** to **complex**:
-
-### 🟢 Easy Tasks (Single Worker)
-
-| # | Task | Expected Behavior |
-|---|------|-------------------|
-| 1 | "Find me some milk" | Product search, returns dairy products |
-| 2 | "Show me apples" | Searches produce, shows Fuji and Gala |
-| 3 | "What spinach do you have?" | Lists Organic Spinach and Frozen Spinach |
-| 4 | "How much is the olive oil?" | Direct price lookup |
-| 5 | "Where can I find water?" | Store layout → Aisle/Beverages section |
-
-### 🟡 Medium Tasks (Multi-Worker, Simple Comparison)
-
-| # | Task | Expected Behavior |
-|---|------|-------------------|
-| 6 | "Compare Fuji apples and Gala apples" | ProductQueryWorker → ExplainerWorker with price/quantity comparison |
-| 7 | "Which milk is cheaper — whole milk or almond milk?" | Price comparison: Organic Whole Milk ($2.49) vs Almond Milk ($3.79) |
-| 8 | "Compare organic spinach and frozen spinach" | Compares Organic ($2.99/250g) vs Frozen ($1.99/500g) by unit price |
-| 9 | "What's the difference between whole wheat crackers and gluten-free crackers?" | Product details comparison with dietary info |
-| 10 | "Add a dozen eggs to my cart" | ProductQueryWorker → CartActionWorker with permission gate |
-| 11 | "I'm lactose intolerant — is the Greek yogurt safe for me?" | ProductQueryWorker → DietaryFactWorker analysis |
-| 12 | "I need protein — recommend chicken or salmon" | Compares Chicken Breast ($6.99/500g) vs Salmon Fillet ($9.99/250g) |
-
-### 🔴 Hard Tasks (Multi-Step, Context-Aware)
-
-| # | Task | Expected Behavior |
-|---|------|-------------------|
-| 13 | "I'm vegan — find me milk and butter alternatives" | Respects vegan preference, suggests Almond Milk, skips butter |
-| 14 | "I want to make a healthy breakfast — get me eggs, spinach, and bread" | Multi-product search, permission-gated cart addition |
-| 15 | "Switch me to seller mode and show my dashboard" | ProfileWorker → SellerDashboardWorker, role change |
-| 16 | "Find the cheapest way to get greens — compare all spinach options" | Deep comparison with unit price analysis |
-| 17 | "I have $10, what's the best value protein I can buy?" | Budget-constrained multi-product comparison |
-| 18 | "Plan a week's worth of groceries for a family of 2" | Complex multi-category planning with cart actions |
-| 19 | "Check my cart, add rice and oil if total is under $30, then checkout" | CartQuery → Conditional add → CheckoutWorker |
-| 20 | "I prefer organic — compare organic vs non-organic across all categories" | Cross-category organic comparison with preference memory |
-
-> **Tip**: Voice mode works great for quick lookups (#1-5). Use text mode for complex comparison tasks (#11-20) so you can read the detailed breakdowns.
+- **Persistent Memory**: Learns user preferences and dietary restrictions via PostgreSQL
+- **Multi-provider LLM**: Automatic fallback between providers on timeout/auth failure
 
 ### 🎤 Voice Interface
 - **Real-time ASR**: Parakeet ONNX model with GPU acceleration
 - **Natural TTS**: Piper voice with emotion presets (excited, calm, neutral)
 - **Barge-in**: Interrupt the agent while it's speaking
-- **VAD**: Silero VAD for accurate speech endpoint detection
+- **VAD**: RMS-based voice activity detection
 - **Heartbeat**: Connection health monitoring with auto-reconnection
 
 ### 📦 Shopping Features
@@ -203,13 +145,15 @@ Try these tasks with the AI assistant (both voice and text) to explore capabilit
 - **Cart Management**: Add/remove/update items with stock validation
 - **Order Placement**: Full checkout flow with address selection
 - **Address Management**: CRUD for saved delivery addresses
-- **Order Tracking**: Real-time order status updates
+- **Order Tracking**: Real-time order status updates (placed → packed → out_for_delivery → delivered)
+- **Product Ratings**: Rate delivered products with star ratings and comments
 - **Dietary Analysis**: Ingredient allergen checking with safety guardrails
 
 ### 🏪 Seller Features
 - **Inventory Management**: Product CRUD with low-stock alerts
 - **Order Fulfillment**: Queue management with status transitions
 - **Dashboard Analytics**: Sales metrics, pending orders, low stock items
+- **Sales Analysis**: Revenue trends, category breakdown, AOV metrics
 
 ---
 
@@ -229,9 +173,9 @@ Try these tasks with the AI assistant (both voice and text) to explore capabilit
 | **Graph DB** | Neo4j | Store layout mapping |
 | **ASR** | Parakeet ONNX (nemo-parakeet-tdt) | Speech-to-text |
 | **TTS** | Piper ONNX | Text-to-speech |
-| **VAD** | Silero VAD | Voice activity detection |
+| **VAD** | RMS-based (custom) | Voice activity detection |
 | **Embeddings** | BAAI/bge-small-en-v1.5 | Product vector embeddings |
-| **LLM** | NVIDIA NIM (Llama 3.1 70B) | Agent reasoning |
+| **LLM** | Multi-provider (NVIDIA NIM, Kimi, Ollama, etc.) | Agent reasoning |
 | **MCP** | FastMCP | Model Context Protocol server |
 
 ---
@@ -282,10 +226,15 @@ GroceryGenie/
 │   │   └── services/
 │   │       ├── agent/           # AI Agent system
 │   │       │   ├── orchestrator.py  # Main agent loop
-│   │       │   ├── llm.py           # LLM client with retry
-│   │       │   ├── memory.py        # Persistent fact storage
-│   │       │   ├── dag.py           # DAG execution engine
-│   │       │   └── workers/         # Task workers
+│   │       │   ├── llm.py           # Multi-provider LLM client
+│   │       │   ├── memory.py        # Persistent fact classifier
+│   │       │   └── tools/           # Tool registry (flat, no DAG)
+│   │       │       ├── cart_tools.py
+│   │       │       ├── order_tools.py
+│   │       │       ├── product_tools.py
+│   │       │       ├── address_tools.py
+│   │       │       ├── seller_tools.py
+│   │       │       └── profile_tools.py
 │   │       ├── voice/           # Voice pipeline
 │   │       │   ├── asr.py       # Speech-to-text
 │   │       │   └── tts.py       # Text-to-speech
@@ -302,7 +251,7 @@ GroceryGenie/
 │       │   ├── Catalog.tsx      # Product catalog
 │       │   ├── Cart.tsx         # Shopping cart
 │       │   └── ...
-│       ├── contexts/            # React contexts
+│       ├── contexts/
 │       │   └── VoiceSessionContext.tsx  # Voice WebSocket provider
 │       ├── services/
 │       │   └── api.ts           # API client with all services
@@ -342,7 +291,6 @@ make check
 
 ```bash
 # 1. Start infrastructure (PostgreSQL, Redis, Qdrant, Neo4j)
-#    All services share a single Postgres instance with separate DBs
 docker compose -f docker-compose.infra.yml up -d
 
 # 2. Start app services (backend + frontend)
@@ -361,8 +309,8 @@ Key environment variables (see `.env.dev` for full list):
 | `REDIS_URL` | `redis://redis:6379/0` | Redis connection |
 | `QDRANT_URL` | `http://qdrant:6333` | Qdrant vector DB |
 | `NEO4J_URI` | `bolt://neo4j:7687` | Neo4j graph DB |
-| `NIM_API_KEY` | - | NVIDIA NIM API key |
-| `NIM_BASE_URL` | `https://integrate.api.nvidia.com/v1` | NIM endpoint |
+| `LLM_PROVIDERS` | (JSON array) | Multi-provider LLM config |
+| `NIM_API_KEY` | - | NVIDIA NIM API key (legacy) |
 | `GOOGLE_CLIENT_ID` | - | Google OAuth client ID |
 | `JWT_SECRET_KEY` | - | JWT signing secret |
 | `USE_GPU` | `true` | Enable GPU acceleration |
@@ -391,7 +339,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-## 🆘 Troubleshooting
+## 🔧 Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
@@ -399,4 +347,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 | Model download fails | Check internet + disk space in `models/` directory |
 | GPU not detected | Verify CUDA installation + `torch.cuda.is_available()` |
 | WebSocket disconnects | Check firewall, enable HTTP/2, verify heartbeat |
-| LLM returns errors | Verify `NIM_API_KEY` and model availability |
+| LLM returns errors | Verify `LLM_PROVIDERS` or `NIM_API_KEY` and model availability |

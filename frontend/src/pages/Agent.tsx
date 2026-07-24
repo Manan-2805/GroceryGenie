@@ -31,12 +31,15 @@ type Message = {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
-  type?: 'text' | 'permission' | 'options' | 'navigation' | 'action_card' | 'status';
+  type?:
+    'text' | 'permission' | 'options' | 'navigation' | 'action_card' | 'status' | 'role_switch';
   options?: OptionItem[];
   free_input_allowed?: boolean;
   navigate_to?: string;
   navigate_label?: string;
   action_data?: Record<string, unknown>;
+  needed_role?: string;
+  original_tool?: string;
 };
 
 type StreamEvent =
@@ -47,6 +50,15 @@ type StreamEvent =
       summary: string;
       action: string;
       payload: Record<string, unknown>;
+    }
+  | {
+      type: 'role_switch_request';
+      text: string;
+      summary: string;
+      options: { label: string; value: string; description?: string }[];
+      needed_role: string;
+      original_tool: string;
+      free_input_allowed: boolean;
     }
   | { type: 'navigate_to'; path: string; label: string }
   | {
@@ -67,7 +79,13 @@ const nextId = () => {
 export const Agent: React.FC = () => {
   const navigate = useNavigate();
   const { sessionId, setSessionId, voiceOk } = useUIStore();
-  const { state: voiceState, startSession, endSession, sendPermissionResponse } = useVoiceSession();
+  const {
+    state: voiceState,
+    startSession,
+    endSession,
+    sendPermissionResponse,
+    sendTextMessage: sendVoiceMessage,
+  } = useVoiceSession();
 
   const [mode, setMode] = useState<'select' | 'text' | 'voice'>('select');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -247,6 +265,34 @@ export const Agent: React.FC = () => {
                       summary: data.summary,
                       payload: data.payload,
                     },
+                  },
+                ]);
+              } else if (data.type === 'role_switch_request') {
+                const text = typeof data.text === 'string' ? data.text : '';
+                const summary = typeof data.summary === 'string' ? data.summary : '';
+                const neededRole =
+                  typeof data.needed_role === 'string' ? data.needed_role : 'seller';
+                const originalTool =
+                  typeof data.original_tool === 'string' ? data.original_tool : '';
+                const roleOptions: OptionItem[] = Array.isArray(data.options)
+                  ? data.options.filter(
+                      (
+                        opt: unknown
+                      ): opt is { label: string; value: string; description?: string } =>
+                        typeof opt === 'object' && opt !== null && 'label' in opt && 'value' in opt
+                    )
+                  : [];
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: nextId(),
+                    role: 'assistant',
+                    content: text || summary,
+                    type: 'role_switch',
+                    options: roleOptions,
+                    free_input_allowed: false,
+                    needed_role: neededRole,
+                    original_tool: originalTool,
                   },
                 ]);
               } else if (data.type === 'options_request') {
@@ -485,6 +531,75 @@ export const Agent: React.FC = () => {
           {/* Message List */}
           <div className="flex-1 p-4 overflow-y-auto space-y-3 flex flex-col bg-gray-50/50 dark:bg-gray-950/10">
             {messages.map((m) => {
+              if (m.type === 'role_switch') {
+                return (
+                  <div key={m.id} className="max-w-[90%] self-center w-full">
+                    <div className="p-4 border rounded-2xl border-purple-300 dark:border-purple-500 bg-purple-50 dark:bg-purple-950/20">
+                      <div className="flex items-center gap-2 text-purple-600 dark:text-purple-400 font-semibold mb-2 text-xs uppercase tracking-wider">
+                        <ShieldAlert size={16} />
+                        <span>Role Switch Required</span>
+                      </div>
+                      <p className="text-sm font-medium mb-4 text-gray-800 dark:text-gray-200">
+                        {m.content}
+                      </p>
+                      {m.options && m.options.length > 0 && (
+                        <div className="flex flex-col gap-2">
+                          {m.options.map((opt) => {
+                            const selectedValue = selectedOptionByMsgId[m.id];
+                            const isSelected = selectedValue === opt.value;
+                            const isCardConsumed = Boolean(selectedValue);
+
+                            if (isCardConsumed && !isSelected) {
+                              return (
+                                <div
+                                  key={opt.value}
+                                  className="w-full px-4 py-2 border rounded-xl text-left bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-800 opacity-40"
+                                >
+                                  <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                    {opt.label}
+                                  </span>
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div key={opt.value} className="w-full">
+                                {isSelected ? (
+                                  <div className="w-full px-4 py-3 border rounded-xl text-left bg-purple-50 dark:bg-purple-950/30 border-purple-300 dark:border-purple-800">
+                                    <span className="text-[10px] text-purple-600 dark:text-purple-400 uppercase tracking-wider font-bold block mb-1">
+                                      ✓ Selected
+                                    </span>
+                                    <span className="text-sm font-semibold text-purple-900 dark:text-purple-200">
+                                      {opt.label}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => handleOptionSelect(m.id, opt.value)}
+                                    disabled={isCardConsumed}
+                                    className="w-full px-4 py-3 border rounded-xl text-left transition bg-white dark:bg-gray-800 hover:bg-purple-50 dark:hover:bg-purple-950/20 border-gray-200 dark:border-gray-700"
+                                  >
+                                    <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                                      {opt.label}
+                                    </span>
+                                    {typeof opt.description === 'string' &&
+                                      opt.description.length > 0 && (
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                          {opt.description}
+                                        </p>
+                                      )}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+
               if (m.type === 'permission') {
                 return (
                   <div key={m.id} className="max-w-[90%] self-center w-full">
@@ -819,6 +934,100 @@ export const Agent: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {/* Options Request Card */}
+          {voiceState.optionsRequest && voiceState.optionsRequest.options.length > 0 && (
+            <div className="w-full max-w-sm p-4 border dark:border-gray-800 rounded-2xl bg-white dark:bg-gray-950 shadow-lg text-left space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className="flex items-center gap-2 text-purple-500 font-bold text-xs uppercase tracking-wider">
+                <MessageSquare size={16} />
+                <span>Choose an option</span>
+              </div>
+              <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 leading-relaxed">
+                {voiceState.optionsRequest.text}
+              </p>
+              <div className="flex flex-col gap-2">
+                {voiceState.optionsRequest.options.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => sendVoiceMessage(opt.value)}
+                    className="w-full px-4 py-3 border rounded-xl text-left transition bg-white dark:bg-gray-800 hover:bg-purple-50 dark:hover:bg-purple-950/20 border-gray-200 dark:border-gray-700"
+                  >
+                    <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                      {opt.label}
+                    </span>
+                    {opt.description != null && opt.description !== '' && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                        {opt.description}
+                      </p>
+                    )}
+                  </button>
+                ))}
+              </div>
+              {voiceState.optionsRequest.freeInputAllowed && (
+                <div className="pt-2 border-t dark:border-gray-700">
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                    Or type your response:
+                  </p>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const input = e.currentTarget.querySelector('input')?.value ?? '';
+                      if (input.trim().length > 0) {
+                        sendVoiceMessage(input.trim());
+                      }
+                      const inputEl = e.currentTarget.querySelector('input');
+                      if (inputEl) inputEl.value = '';
+                    }}
+                    className="flex gap-2"
+                  >
+                    <input
+                      type="text"
+                      placeholder="Type here..."
+                      maxLength={500}
+                      className="flex-1 px-3 py-2 border dark:border-gray-700 bg-white dark:bg-gray-800 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                    />
+                    <button
+                      type="submit"
+                      className="px-3 py-2 bg-purple-600 text-white rounded-lg text-xs font-bold hover:bg-purple-700 transition"
+                    >
+                      Send
+                    </button>
+                  </form>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Role Switch Request Card */}
+          {voiceState.roleSwitchRequest && (
+            <div className="w-full max-w-sm p-4 border dark:border-gray-800 rounded-2xl bg-white dark:bg-gray-950 shadow-lg text-left space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className="flex items-center gap-2 text-purple-500 font-bold text-xs uppercase tracking-wider">
+                <ShieldAlert size={16} />
+                <span>Role Switch Required</span>
+              </div>
+              <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 leading-relaxed">
+                {voiceState.roleSwitchRequest.text}
+              </p>
+              <div className="flex flex-col gap-2">
+                {voiceState.roleSwitchRequest.options.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => sendVoiceMessage(opt.value)}
+                    className="w-full px-4 py-3 border rounded-xl text-left transition bg-white dark:bg-gray-800 hover:bg-purple-50 dark:hover:bg-purple-950/20 border-gray-200 dark:border-gray-700"
+                  >
+                    <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                      {opt.label}
+                    </span>
+                    {opt.description != null && opt.description !== '' && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                        {opt.description}
+                      </p>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Permission Request Card */}
           {voiceState.status === 'waiting_permission' && voiceState.permissionRequest && (

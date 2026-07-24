@@ -13,7 +13,7 @@ The GroceryGenie backend is a **high-performance asynchronous Python service** b
 
 - **REST API**: Full CRUD for products, cart, orders, addresses, users
 - **WebSocket Voice API**: Real-time audio streaming with VAD, ASR, and TTS
-- **AI Agent System**: DAG-based task decomposition with LLM-powered workers
+- **AI Agent System**: Single-shot intent classification with flat tool registry (no DAG)
 - **RAG Pipeline**: Hybrid search (Qdrant vectors + PostgreSQL keyword)
 - **Store Graph**: Neo4j-powered store layout and aisle mapping
 - **GPU Acceleration**: Automatic CUDA/DirectML detection for ONNX models
@@ -38,19 +38,25 @@ The GroceryGenie backend is a **high-performance asynchronous Python service** b
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │              Agent Orchestrator                       │   │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────────────┐   │   │
-│  │  │ LLM Call │  │ DAG Exec │  │ 11 Workers       │   │   │
-│  │  │ (NIM)    │  │ (asyncio)│  │ (Product, Cart,  │   │   │
-│  │  │ + Retry  │  │ + Timeout│  │  Order, Address, │   │   │
-│  │  └──────────┘  └──────────┘  │  Profile, etc.)  │   │   │
-│  │                               └──────────────────┘   │   │
+│  │  ┌──────────┐  ┌─────────────────────────────────┐  │   │
+│  │  │ LLM Call │  │ Tool Registry (pure Python)     │  │   │
+│  │  │(Provider)│  │ - cart_tools.py                  │  │   │
+│  │  │ + Retry  │  │ - order_tools.py                 │  │   │
+│  │  │ + Fallbk │  │ - product_tools.py               │  │   │
+│  │  └──────────┘  │ - address_tools.py               │  │   │
+│  │                 │ - seller_tools.py                │  │   │
+│  │                 │ - profile_tools.py               │  │   │
+│  │                 └─────────────────────────────────┘  │   │
+│  │  ┌──────────┐  ┌─────────────────────────────────┐  │   │
+│  │  │ Fast Path│  │ 0ms LLM bypass for 13+ commands │  │   │
+│  │  └──────────┘  └─────────────────────────────────┘  │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │              Voice Pipeline                           │   │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────────────┐   │   │
 │  │  │ VAD      │  │ ASR      │  │ TTS              │   │   │
-│  │  │(Silero)  │  │(Parakeet)│  │(Piper + Emotion) │   │   │
+│  │  │ (RMS)    │  │(Parakeet)│  │(Piper + Emotion) │   │   │
 │  │  └──────────┘  └──────────┘  └──────────────────┘   │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                                                              │
@@ -89,9 +95,8 @@ QDRANT_URL=http://localhost:6333
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=grocergeniepass
-NIM_API_KEY=your_nim_api_key
-NIM_BASE_URL=https://integrate.api.nvidia.com/v1
-NIM_MODEL=meta/llama-3.1-70b-instruct
+# Multi-provider LLM config (JSON array) or use legacy NIM_* fields:
+LLM_PROVIDERS=[{"name":"nvidia","api_key":"nvapi-...","base_url":"https://integrate.api.nvidia.com/v1","model":"meta/llama-3.1-70b-instruct","type":"primary","temperature":0.3,"timeout":60.0}]
 GOOGLE_CLIENT_ID=your_google_client_id
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 JWT_SECRET_KEY=your_jwt_secret
@@ -123,7 +128,6 @@ uv run pytest -v
 ```
 backend/
 ├── app/
-│   ├── __init__.py
 │   ├── main.py                    # FastAPI app, lifespan, health checks
 │   ├── prestart.py                # Pre-startup hooks
 │   ├── api/
@@ -132,8 +136,9 @@ backend/
 │   │   ├── cart.py                # Shopping cart CRUD
 │   │   ├── chat.py                # SSE text chat endpoint
 │   │   ├── orders.py              # Order management + fulfillment
-│   │   ├── products.py            # Product CRUD + RAG QA
+│   │   ├── products.py            # Product CRUD + RAG QA + image upload
 │   │   ├── ratings.py             # Product ratings
+│   │   ├── routes.py              # Additional route definitions
 │   │   ├── users.py               # User profile + role management
 │   │   └── ws.py                  # Voice WebSocket endpoint
 │   ├── core/
@@ -142,13 +147,14 @@ backend/
 │   │   ├── limiter.py             # Rate limiting
 │   │   └── security.py            # JWT encode/decode
 │   ├── db/
-│   │   ├── base.py                # SQLAlchemy engine + session
+│   │   ├── base.py                # SQLAlchemy engine + session (with audit columns)
 │   │   ├── reset.py               # DB reset utility
-│   │   ├── seed.py                # Seed data
-│   │   ├── models/
+│   │   ├── seed.py                # Seed data (24 products + dev user)
+│   │   ├── models/                # SQLAlchemy models
 │   │   │   ├── address.py         # Address model
 │   │   │   ├── cart.py            # CartItem model
-│   │   │   ├── enums.py           # UserRole, OrderStatus, etc.
+│   │   │   ├── enums.py           # UserRole, OrderStatus, FactCategory, ChatMode
+│   │   │   ├── error.py           # AppError model
 │   │   │   ├── memory.py          # PersistentFact model
 │   │   │   ├── order.py           # Order + OrderItem models
 │   │   │   ├── product.py         # Product model
@@ -157,40 +163,35 @@ backend/
 │   │   │   └── user.py            # User model
 │   │   └── migrations/            # Alembic migration files
 │   ├── middleware/
-│   │   └── error_handler.py       # Global error handling
+│   │   └── error_handler.py       # Global error handling + DB logging
 │   └── services/
 │       ├── cache.py               # Redis caching for products
-│       ├── memory.py              # Redis session + Mem0 stub
+│       ├── memory.py              # Redis session + Mem0 bridge
 │       ├── search.py              # Hybrid search wrapper
 │       ├── agent/
-│       │   ├── orchestrator.py    # Main agent loop + DAG execution
-│       │   ├── llm.py             # LLM client (NIM) with retry
+│       │   ├── orchestrator.py    # Main agent loop (flat tool architecture)
+│       │   ├── llm.py             # Multi-provider LLM client with retry + fallback
 │       │   ├── memory.py          # Persistent fact classifier
-│       │   ├── dag.py             # DAG execution engine
-│       │   └── workers/
-│       │       ├── base.py        # Base worker class
-│       │       ├── product.py     # Product search worker
-│       │       ├── cart.py        # Cart action worker
-│       │       ├── order.py       # Order status worker
-│       │       ├── dietary.py     # Dietary analysis worker
-│       │       ├── explainer.py   # Data summarization worker
-│       │       ├── layout.py      # Store layout worker
-│       │       ├── seller.py      # Seller dashboard worker
-│       │       ├── address.py     # Address management worker
-│       │       ├── checkout.py    # Checkout/order placement worker
-│       │       ├── profile.py     # User profile worker
-│       │       └── seller_product.py  # Seller product management
+│       │   ├── prompt_logger.py   # Dev mode prompt logging
+│       │   └── tools/             # Flat tool registry (no workers/DAG)
+│       │       ├── __init__.py    # Tool registry + RBAC permissions
+│       │       ├── address_tools.py  # Address CRUD
+│       │       ├── cart_tools.py     # Cart operations
+│       │       ├── order_tools.py    # Order placement + viewing
+│       │       ├── product_tools.py  # Product search
+│       │       ├── profile_tools.py  # Role switch + facts
+│       │       └── seller_tools.py   # Seller product management + Qdrant sync
 │       ├── voice/
 │       │   ├── asr.py             # Parakeet ASR (speech-to-text)
-│       │   └── tts.py             # Piper TTS (text-to-speech)
+│       │   └── tts.py             # Piper TTS (text-to-speech) with emotion presets
 │       └── rag/
-│           ├── embedder.py        # SentenceTransformer embeddings
-│           ├── retriever.py       # Qdrant hybrid search
+│           ├── embedder.py        # SentenceTransformer embeddings (BGE-small)
+│           ├── retriever.py       # Qdrant hybrid search + RRF fusion
 │           └── graph.py           # Neo4j store layout queries
 ├── tests/
-│   ├── test_orchestrator.py       # DAG + memory tests
+│   ├── test_orchestrator.py       # Memory classification tests
 │   ├── test_voice_pipeline.py     # ASR + TTS unit tests
-│   └── test_e2e.py                # End-to-end browser tests
+│   └── test_e2e.py                # End-to-end Playwright browser tests
 ├── alembic.ini                    # Alembic configuration
 ├── download_and_test.py           # Model download + pipeline test
 └── pyproject.toml                 # Python dependencies + tooling
@@ -204,15 +205,14 @@ backend/
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/auth/me` | Get current user |
-| POST | `/api/v1/auth/login` | Email/password login |
-| POST | `/api/v1/auth/register` | User registration |
+| POST | `/api/v1/auth/login` | Email/password login (dev mode) |
 | POST | `/api/v1/auth/logout` | Logout |
 | POST | `/api/v1/auth/dev-bypass` | Dev auth bypass |
 
 ### Products
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/products` | List products (with filters) |
+| GET | `/api/v1/products` | List products (with filters, sorting, pagination) |
 | GET | `/api/v1/products/{id}` | Get product details |
 | POST | `/api/v1/products` | Create product (seller) |
 | PUT | `/api/v1/products/{id}` | Update product (seller) |
@@ -232,7 +232,7 @@ backend/
 ### Orders
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/orders` | List user orders |
+| GET | `/api/v1/orders` | List user orders (paginated) |
 | POST | `/api/v1/orders` | Place order |
 | GET | `/api/v1/orders/{id}` | Get order details |
 | PUT | `/api/v1/orders/{id}/status` | Update order status (seller) |
@@ -245,6 +245,19 @@ backend/
 | POST | `/api/v1/addresses` | Create address |
 | PUT | `/api/v1/addresses/{id}` | Update address |
 | DELETE | `/api/v1/addresses/{id}` | Delete address |
+
+### Ratings
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/ratings` | Submit product rating |
+| GET | `/api/v1/ratings/product/{id}` | Get product reviews |
+
+### Users
+| Method | Path | Description |
+|--------|------|-------------|
+| PATCH | `/api/v1/users/me/role` | Switch user role |
+| GET | `/api/v1/users/facts` | List persistent facts |
+| DELETE | `/api/v1/users/facts/{id}` | Delete a fact |
 
 ### Chat
 | Method | Path | Description |
@@ -270,9 +283,9 @@ The voice pipeline processes audio in real-time:
 
 1. **Audio Capture**: Browser captures 16kHz PCM mono audio via Web Audio API
 2. **WebSocket Stream**: Audio chunks sent to `/api/v1/ws/voice`
-3. **VAD (Silero)**: Detects speech onset/offset with barge-in support
+3. **VAD (RMS)**: Detects speech onset/offset with barge-in support
 4. **ASR (Parakeet)**: Transcribes speech to text using ONNX model
-5. **Agent Orchestrator**: Processes text through DAG-based AI agent
+5. **Agent Orchestrator**: Processes text through flat tool architecture
 6. **TTS (Piper)**: Synthesizes response with emotion presets
 7. **Audio Playback**: Streams PCM chunks back to browser
 
@@ -287,28 +300,33 @@ The voice pipeline processes audio in real-time:
 
 ## 🤖 Agent System
 
-The AI agent uses a **DAG-based task decomposition** architecture:
+The AI agent uses a **single-shot intent classification** architecture with a flat tool registry:
 
-1. **Decomposition**: LLM breaks user request into sub-goals with dependencies
-2. **DAG Execution**: Workers execute in parallel respecting dependency order
-3. **Synthesis**: Results are combined into a natural language response
-4. **Permission Gates**: Sensitive actions require user confirmation
-5. **Memory**: Persistent facts stored in PostgreSQL, conversation in Redis
+1. **Fast Path Check**: 13+ command patterns matched via string matching (0 LLM calls)
+2. **Intent Classification**: Single LLM call extracts tool name + parameters
+3. **Tool Execution**: Pure Python functions execute the action (no LLM calls)
+4. **Response Formatting**: LLM-generated natural language response from tool results
+5. **Permission Gates**: Sensitive actions require user confirmation
+6. **Memory**: Persistent facts stored in PostgreSQL, conversation in Redis
+7. **RBAC**: Tool-level permission checks based on user role
 
-### Workers
-| Worker | Purpose | Dependencies |
-|--------|---------|-------------|
-| ProductQueryWorker | Search/filter products | None |
-| CartActionWorker | Add/remove/update cart | ProductQueryWorker |
-| OrderStatusWorker | Check order status | None |
-| DietaryFactWorker | Analyze ingredients | ProductQueryWorker |
-| ExplainerWorker | Summarize data | Any |
-| StoreLayoutWorker | Find aisle/section | ProductQueryWorker |
-| SellerDashboardWorker | Seller stats | None |
-| AddressWorker | Manage addresses | None |
-| CheckoutWorker | Place orders | CartActionWorker |
-| ProfileWorker | User profile | None |
-| SellerProductWorker | Manage products | None |
+### Tools
+| Tool | Purpose |
+|------|---------|
+| `search_products` | Search/filter products with hybrid RRF search |
+| `add_to_cart` | Add product to cart with stock validation |
+| `remove_from_cart` | Remove product from cart |
+| `update_cart_quantity` | Update cart item quantity |
+| `view_cart` | View current cart contents |
+| `place_order` | Place order using cart + default address |
+| `view_orders` | View order history |
+| `switch_role` | Switch between customer/seller roles |
+| `manage_addresses` | CRUD for delivery addresses |
+| `view_facts` | View persistent user facts |
+| `seller_list_products` | List own products (seller) |
+| `seller_create_product` | Create product (seller) |
+| `seller_update_product` | Update product (seller) |
+| `seller_delete_product` | Deactivate product (seller) |
 
 ---
 
@@ -343,8 +361,9 @@ uv run pytest tests/test_voice_pipeline.py -v
 # Orchestrator tests
 uv run pytest tests/test_orchestrator.py -v
 
-# E2E tests (requires services)
-uv run pytest tests/test_e2e.py -v
+# E2E tests (requires services + PLAYWRIGHT)
+cd backend
+$env:RUN_E2E="1"; uv run pytest tests/test_e2e.py -v
 ```
 
 ---
@@ -367,4 +386,4 @@ docker build -f Dockerfile.prod -t grocergenie-backend .
 | Voice model not found | Run `uv run download_and_test.py` |
 | GPU not detected | Check `torch.cuda.is_available()` in Python |
 | WebSocket disconnects | Check network, enable HTTP/2, verify heartbeat |
-| LLM returns errors | Verify `NIM_API_KEY` and model availability |
+| LLM returns errors | Verify `LLM_PROVIDERS` (or `NIM_API_KEY`) and model availability |

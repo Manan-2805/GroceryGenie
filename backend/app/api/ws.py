@@ -397,7 +397,37 @@ async def handle_orchestrator_result(
     """Handles the orchestrator result, sending appropriate messages and TTS."""
     rtype = str(result["type"])
 
-    if rtype == "permission_request":
+    if rtype == "role_switch_request":
+        text_val = str(result.get("text", ""))
+        options_val = result.get("options", [])
+        needed_role = result.get("needed_role", "seller")
+        original_tool = result.get("original_tool", "")
+
+        await safe_send_json(
+            websocket,
+            {
+                "type": "role_switch_request",
+                "text": text_val,
+                "options": options_val,
+                "needed_role": needed_role,
+                "original_tool": original_tool,
+                "free_input_allowed": False,
+            },
+        )
+        await safe_send_json(
+            websocket,
+            {
+                "type": "tool_result",
+                "result": result,
+            },
+        )
+        async for pcm_chunk in synthesize_text_to_pcm_stream(
+            text_val, emotion="neutral"
+        ):
+            await voice_output_queue.put(pcm_chunk)
+        await voice_output_queue.put(b"EOF")
+
+    elif rtype == "permission_request":
         action = str(result.get("action", ""))
         summary = str(result.get("summary", ""))
         payload = result.get("payload", {})
@@ -531,16 +561,18 @@ async def process_audio_query(
     # Send orchestrator processing status
     await safe_send_json(websocket, {"type": "status", "status": "thinking"})
 
-    # 2. Run agent orchestrator turn
+    # 2. Run agent orchestrator turn - use voice stream for progressive TTS
     try:
         turn_start = time.perf_counter()
-        result = await orchestrator.run_turn(transcript)
-        turn_duration = time.perf_counter() - turn_start
-        logger.info(f"Orchestrator turn completed in {turn_duration:.3f}s")
 
-        await handle_orchestrator_result(
-            result, orchestrator, websocket, voice_output_queue
-        )
+        # Use the voice-optimized streaming turn
+        async for stream_result in orchestrator.run_turn_voice_stream(transcript):
+            await handle_orchestrator_result(
+                stream_result, orchestrator, websocket, voice_output_queue
+            )
+
+        turn_duration = time.perf_counter() - turn_start
+        logger.info(f"Orchestrator voice stream turn completed in {turn_duration:.3f}s")
 
     except Exception as e:
         logger.error(f"Error processing agent voice turn: {e}")

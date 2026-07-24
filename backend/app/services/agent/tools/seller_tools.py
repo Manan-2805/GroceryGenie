@@ -7,9 +7,22 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models.enums import UserRole
 from app.db.models.product import Product
+from app.db.models.user import User
 
 logger = logging.getLogger(__name__)
+
+
+async def _require_seller_role(db: AsyncSession, user_id: UUID) -> None:
+    """Defense-in-depth: verify the user has seller role before executing seller tools."""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user or user.role != UserRole.seller:
+        raise PermissionError(
+            f"Tool requires 'seller' role. Current role is '{user.role.value if user else 'unknown'}'. "
+            "Use switch_role tool to change your role."
+        )
 
 
 async def _sync_product_to_qdrant(product: Product) -> None:

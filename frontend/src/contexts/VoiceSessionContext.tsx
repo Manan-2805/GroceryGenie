@@ -14,6 +14,17 @@ export type VoiceSessionState = {
   lastToolResult: Record<string, unknown> | null;
   error: string | null;
   audioLevel: number; // 0-1 for waveform visualization
+  optionsRequest: {
+    text: string;
+    options: Array<{ label: string; value: string; description?: string }>;
+    freeInputAllowed: boolean;
+  } | null;
+  roleSwitchRequest: {
+    text: string;
+    neededRole: string;
+    originalTool: string;
+    options: Array<{ label: string; value: string; description?: string }>;
+  } | null;
 };
 
 type VoiceSessionContextType = {
@@ -36,6 +47,10 @@ type VoiceMessage = {
   navigate_to?: string;
   navigate_label?: string;
   session_id?: string;
+  options?: Array<{ label: string; value: string; description?: string }>;
+  free_input_allowed?: boolean;
+  needed_role?: string;
+  original_tool?: string;
 };
 
 const VoiceSessionContext = createContext<VoiceSessionContextType | null>(null);
@@ -62,6 +77,8 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
     lastToolResult: null,
     error: null,
     audioLevel: 0,
+    optionsRequest: null,
+    roleSwitchRequest: null,
   });
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -138,6 +155,8 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
         lastToolResult: null,
         error: clearError ? null : prev.error,
         audioLevel: 0,
+        optionsRequest: null,
+        roleSwitchRequest: null,
       }));
     },
     [cleanupResources]
@@ -270,6 +289,8 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
                       ...prev,
                       transcript: data.text as string,
                       sttTiming: typeof data.timing === 'number' ? data.timing : null,
+                      optionsRequest: null,
+                      roleSwitchRequest: null,
                     }));
                   }
                   break;
@@ -279,6 +300,26 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
                       ...prev,
                       status: 'speaking',
                       transcript: data.text as string,
+                      optionsRequest: {
+                        text: data.text as string,
+                        options: Array.isArray(data.options) ? data.options : [],
+                        freeInputAllowed: data.free_input_allowed !== false,
+                      },
+                    }));
+                  }
+                  break;
+                case 'role_switch_request':
+                  if (typeof data.text === 'string') {
+                    setState((prev) => ({
+                      ...prev,
+                      status: 'speaking',
+                      transcript: data.text as string,
+                      roleSwitchRequest: {
+                        text: data.text as string,
+                        neededRole: (data.needed_role as string) || 'seller',
+                        originalTool: (data.original_tool as string) || '',
+                        options: Array.isArray(data.options) ? data.options : [],
+                      },
                     }));
                   }
                   break;
@@ -296,6 +337,8 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
                       ...prev,
                       status: 'speaking',
                       transcript: data.text as string,
+                      optionsRequest: null,
+                      roleSwitchRequest: null,
                     }));
                   }
                   if (typeof data.navigate_to === 'string' && data.navigate_to.trim().length > 0) {

@@ -5,14 +5,20 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.enums import UserRole
 from app.services.agent.llm import call_llm, extract_json_from_response
-from app.services.agent.tools import TOOL_DESCRIPTIONS, TOOL_REGISTRY
+from app.services.agent.tools import (
+    TOOL_DESCRIPTIONS,
+    TOOL_REGISTRY,
+    check_tool_permission,
+)
 from app.services.memory import (
+    Mem0,
     append_message_to_session,
     get_redis_client,
     get_session_history,
@@ -170,12 +176,26 @@ class AgentOrchestrator:
         self._narrowing_context: dict[str, Any] | None = None
         # Quantity pending state
         self._pending_quantity_context: dict[str, Any] | None = None
+        # Mem0 memory client (bridges to PersistentFact)
+        self._mem0: Mem0 | None = None
+
+    async def _get_mem0(self) -> Mem0:
+        """Get or create the Mem0 memory client for this session."""
+        if self._mem0 is None:
+            from app.services.memory import Mem0 as Mem0Client
+
+            self._mem0 = Mem0Client(db=self.db, user_id=self.user_id)
+        return self._mem0
 
     async def _get_facts(self, query: str | None = None) -> str:
-        from app.services.agent.memory import get_relevant_user_facts
-
-        facts = await get_relevant_user_facts(self.db, self.user_id, query_text=query)
-        return "; ".join([f.fact_text for f in facts]) if facts else "None"
+        mem0 = await self._get_mem0()
+        if query:
+            facts = await mem0.search(query=query, limit=3)
+        else:
+            facts = await mem0.get_all()
+        if facts:
+            return "; ".join([f["fact_text"] for f in facts])
+        return "None"
 
     async def run_turn(self, user_message: str) -> dict[str, Any]:
         turn_start_time = time.perf_counter()
@@ -214,6 +234,77 @@ class AgentOrchestrator:
             return await self._handle_narrowing_response(user_message)
         if self._narrowing_context:
             return await self._handle_narrowing_response(user_message)
+
+        # Check for pending role switch request
+        role_switch_key = f"chat:session:{self.session_id}:pending_role_switch"
+        role_switch_str = await redis_client.get(role_switch_key)
+        if role_switch_str:
+            role_switch_data = json.loads(role_switch_str)
+            # Check if user is confirming the role switch
+            msg_lower = user_message.strip().lower()
+            is_confirm = msg_lower in (
+                "yes",
+                "sure",
+                "ok",
+                "do it",
+                "proceed",
+                "confirm",
+                "yeah",
+                "yep",
+            )
+            is_deny = msg_lower in (
+                "no",
+                "stop",
+                "cancel",
+                "never mind",
+                "don't",
+                "dont",
+                "nah",
+            )
+
+            # Also check for structured option value
+            if user_message.startswith("switch_role:"):
+                is_confirm = True
+                needed_role = user_message.split("switch_role:")[1].strip()
+                role_switch_data["needed_role"] = needed_role
+
+            if is_confirm:
+                await redis_client.delete(role_switch_key)
+                needed_role = role_switch_data.get("needed_role", "seller")
+                # Use switch_role tool to change the user's role in DB
+                switch_result = await self._execute_tool(
+                    "switch_role", {"role": needed_role}
+                )
+                if isinstance(switch_result, dict) and switch_result.get("success"):
+                    # Update the orchestrator's cached role
+                    with contextlib.suppress(ValueError):
+                        self.user_role = UserRole(needed_role)
+                    # Retry the original tool
+                    tool_name = role_switch_data.get("tool_name", "")
+                    original_message = role_switch_data.get("original_message", "")
+                    if tool_name:
+                        result = await self._execute_tool(tool_name, {})
+                        response = await self._format_response(original_message, result)
+                        response["text"] = (
+                            f"Role switched to '{needed_role}'. "
+                            + response.get("text", "")
+                        )
+                        return response
+                return {
+                    "type": "response",
+                    "text": f"Switched to '{needed_role}' role. How can I help?",
+                    "options": None,
+                }
+
+            if is_deny:
+                await redis_client.delete(role_switch_key)
+                return {
+                    "type": "response",
+                    "text": "No problem. Please ask for something else.",
+                    "options": None,
+                }
+            # Fall through for other messages
+            await redis_client.delete(role_switch_key)
 
         # Check for pending permission action
         pending_key = f"chat:session:{self.session_id}:pending_action"
@@ -395,6 +486,22 @@ class AgentOrchestrator:
         ):
             await self._store_fact(fact_to_remember, fact_category)
 
+        # RBAC check: verify user has permission for the selected tool
+        if selected_tool != "out_of_scope":
+            try:
+                check_tool_permission(selected_tool, self.user_role)
+            except PermissionError as e:
+                # Extract which role is needed from the error message
+                err_str = str(e)
+                needed_role = "seller"
+                if "requires '" in err_str:
+                    needed_role = err_str.split("requires '")[1].split("'", maxsplit=1)[
+                        0
+                    ]
+                return await self._handle_role_switch_request(
+                    user_message, selected_tool, needed_role
+                )
+
         # Handle quantity-pending for add_to_cart
         if selected_tool == "add_to_cart":
             quantity = params.get("quantity")
@@ -415,7 +522,6 @@ class AgentOrchestrator:
                     and cart_res["items"]
                 ):
                     options = []
-                    new_qty = params.get("quantity", 1)
                     for item in cart_res["items"]:
                         item_pid = item.get("product_id", "")
                         item_name = item.get("name", "")
@@ -427,7 +533,7 @@ class AgentOrchestrator:
                                     "description": f"Currently {item.get('quantity', 1)} in cart",
                                     "actions": [
                                         {
-                                            "label": f"Set to {new_qty}"
+                                            "label": "Update Quantity"
                                             if selected_tool == "update_cart_quantity"
                                             else "Remove",
                                             "value": f"add_{item_pid}"
@@ -794,37 +900,75 @@ class AgentOrchestrator:
 
         return await self._prompt_next_address_slot(ctx)
 
+    async def _handle_role_switch_request(
+        self, user_message: str, tool_name: str, needed_role: str
+    ) -> dict[str, Any]:
+        """Handle a request to use a tool that requires a different role.
+        Asks the user if they want to switch roles, then retries the tool.
+        """
+        logger.info(
+            f"Role switch needed: user needs '{needed_role}' role for tool '{tool_name}'. "
+            f"Current role: {self.user_role}"
+        )
+
+        # Store the pending action in Redis so we can retry after role switch
+        redis_client = get_redis_client()
+        pending_key = f"chat:session:{self.session_id}:pending_role_switch"
+        pending_data = {
+            "tool_name": tool_name,
+            "original_message": user_message,
+            "needed_role": needed_role,
+        }
+        await redis_client.set(pending_key, json.dumps(pending_data), ex=300)
+        await append_message_to_session(str(self.session_id), "user", user_message)
+
+        role_display = {
+            "seller": "a seller",
+            "customer": "a customer",
+        }
+        needed_display = role_display.get(needed_role, f"'{needed_role}'")
+        current_role_name = (
+            self.user_role.value
+            if hasattr(self.user_role, "value")
+            else str(self.user_role)
+        )
+
+        return {
+            "type": "role_switch_request",
+            "text": (
+                f"This action ({tool_name}) requires you to be {needed_display}. "
+                f"Your current role is '{current_role_name}'. "
+                "Would you like to switch role?"
+            ),
+            "summary": (
+                f"switch to '{needed_role}' role to {tool_name.replace('_', ' ')}"
+            ),
+            "options": [
+                {
+                    "label": f"Yes, switch to {needed_role}",
+                    "value": f"switch_role:{needed_role}",
+                    "description": "Change role and retry",
+                },
+                {
+                    "label": "No, cancel",
+                    "value": "cancel",
+                    "description": "Stay as current role",
+                },
+            ],
+            "free_input_allowed": False,
+            "needed_role": needed_role,
+            "original_tool": tool_name,
+        }
+
     async def _store_fact(self, fact_text: str, fact_category: str | None) -> None:
-        """Store a persistent fact for the user."""
+        """Store a persistent fact for the user using Mem0 bridge."""
         try:
-            from sqlalchemy import select
-
-            from app.db.models.enums import FactCategory
-            from app.db.models.memory import PersistentFact
-
-            dup = await self.db.execute(
-                select(PersistentFact).where(
-                    PersistentFact.user_id == self.user_id,
-                    PersistentFact.fact_text.ilike(fact_text.strip()),
-                )
-            )
-            if not dup.scalar_one_or_none():
-                try:
-                    cat = (
-                        FactCategory(fact_category)
-                        if fact_category
-                        else FactCategory.other
-                    )
-                except ValueError:
-                    cat = FactCategory.other
-                fact = PersistentFact(
-                    user_id=self.user_id, fact_text=fact_text.strip(), category=cat
-                )
-                self.db.add(fact)
-                await self.db.commit()
-                self._facts_cache = None
+            mem0 = await self._get_mem0()
+            category = fact_category if fact_category else "other"
+            await mem0.add(text=fact_text.strip(), category=category)
+            self._facts_cache = None
         except Exception as e:
-            logger.warning(f"Failed to store fact: {e}")
+            logger.warning(f"Failed to store fact via Mem0: {e}")
 
     async def _check_fast_path(self, user_message: str) -> dict[str, Any] | None:
         """Deterministically check if message can be handled in 0ms without an LLM call."""
@@ -1257,6 +1401,437 @@ class AgentOrchestrator:
         except (json.JSONDecodeError, KeyError):
             clean_text = response_text[:1000]
             return {"type": "response", "text": clean_text, "options": None}
+
+    async def _format_response_stream(
+        self, query: str, results: Any
+    ) -> AsyncGenerator[str, None]:
+        """Format tool results into a natural response, yielding tokens via LLM streaming.
+        For built-in formatters (non-LLM), yields the full text.
+        """
+        # If the tool already returned a message, yield it directly
+        if isinstance(results, dict) and "message" in results and "success" in results:
+            yield results["message"]
+            return
+
+        # If empty results
+        if isinstance(results, dict) and results.get("empty"):
+            yield results.get("message", "No results found.")
+            return
+
+        # For built-in formatters, yield the full text
+        built_in_result = await self._format_response(query, results)
+        if built_in_result.get("type") == "response":
+            text = built_in_result.get("text", "")
+            if text and not built_in_result.get("options"):
+                yield text
+                return
+
+        # For options_response, yield the text but don't stream (options need full text)
+        text = built_in_result.get("text", "")
+        if text:
+            yield text
+
+    async def run_turn_voice_stream(
+        self, user_message: str
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Voice-optimized turn execution that yields sentences progressively.
+        Instead of waiting for the full LLM response, this method:
+        1. Runs intent classification (blocking - needs full JSON)
+        2. Executes tool (blocking - needs full result)
+        3. Streams the response formatting via call_llm_stream()
+        4. Buffers tokens into sentences and yields each sentence immediately
+
+        Yields:
+            dict with keys:
+            - type: "sentence" | "options_response" | "permission_request" | "role_switch_request" | "error"
+            - text: The sentence text or response text
+            - options: Optional list of options
+            - free_input_allowed: bool
+        """
+        turn_start_time = time.perf_counter()
+        logger.info(
+            f"[VOICE STREAM] Starting turn for user {self.user_id}, session {self.session_id}..."
+        )
+
+        redis_client = get_redis_client()
+
+        # Check for pending state (address, quantity, narrowing, role switch, permission)
+        # Same checks as run_turn() but yield the result directly
+        addr_collect_key = f"chat:session:{self.session_id}:address_collect"
+        addr_collect_str = await redis_client.get(addr_collect_key)
+        if addr_collect_str:
+            collect_ctx = json.loads(addr_collect_str)
+            await redis_client.delete(addr_collect_key)
+            result = await self._handle_address_collect_response(
+                user_message, collect_ctx
+            )
+            yield result
+            return
+
+        quantity_key = f"chat:session:{self.session_id}:pending_quantity"
+        pending_quantity_str = await redis_client.get(quantity_key)
+        if pending_quantity_str:
+            self._pending_quantity_context = json.loads(pending_quantity_str)
+            await redis_client.delete(quantity_key)
+            result = await self._handle_quantity_response(user_message)
+            yield result
+            return
+        if self._pending_quantity_context:
+            result = await self._handle_quantity_response(user_message)
+            yield result
+            return
+
+        narrowing_key = f"chat:session:{self.session_id}:narrowing_context"
+        narrowing_str = await redis_client.get(narrowing_key)
+        if narrowing_str:
+            self._narrowing_context = json.loads(narrowing_str)
+            await redis_client.delete(narrowing_key)
+            result = await self._handle_narrowing_response(user_message)
+            yield result
+            return
+        if self._narrowing_context:
+            result = await self._handle_narrowing_response(user_message)
+            yield result
+            return
+
+        # Check for pending role switch
+        role_switch_key = f"chat:session:{self.session_id}:pending_role_switch"
+        role_switch_str = await redis_client.get(role_switch_key)
+        if role_switch_str:
+            role_switch_data = json.loads(role_switch_str)
+            msg_lower = user_message.strip().lower()
+            is_confirm = msg_lower in (
+                "yes",
+                "sure",
+                "ok",
+                "do it",
+                "proceed",
+                "confirm",
+                "yeah",
+                "yep",
+            )
+            is_deny = msg_lower in (
+                "no",
+                "stop",
+                "cancel",
+                "never mind",
+                "don't",
+                "dont",
+                "nah",
+            )
+            if user_message.startswith("switch_role:"):
+                is_confirm = True
+                needed_role = user_message.split("switch_role:")[1].strip()
+                role_switch_data["needed_role"] = needed_role
+
+            if is_confirm:
+                await redis_client.delete(role_switch_key)
+                needed_role = role_switch_data.get("needed_role", "seller")
+                switch_result = await self._execute_tool(
+                    "switch_role", {"role": needed_role}
+                )
+                if isinstance(switch_result, dict) and switch_result.get("success"):
+                    with contextlib.suppress(ValueError):
+                        self.user_role = UserRole(needed_role)
+                    tool_name = role_switch_data.get("tool_name", "")
+                    original_message = role_switch_data.get("original_message", "")
+                    if tool_name:
+                        result = await self._execute_tool(tool_name, {})
+                        response = await self._format_response(original_message, result)
+                        response["text"] = (
+                            f"Role switched to '{needed_role}'. "
+                            + response.get("text", "")
+                        )
+                        yield response
+                        return
+                yield {
+                    "type": "response",
+                    "text": f"Switched to '{needed_role}' role. How can I help?",
+                    "options": None,
+                }
+                return
+            if is_deny:
+                await redis_client.delete(role_switch_key)
+                yield {
+                    "type": "response",
+                    "text": "No problem. Please ask for something else.",
+                    "options": None,
+                }
+                return
+            await redis_client.delete(role_switch_key)
+
+        # Check for pending permission action
+        pending_key = f"chat:session:{self.session_id}:pending_action"
+        pending_data_str = await redis_client.get(pending_key)
+        if pending_data_str:
+            pending_data = json.loads(pending_data_str)
+            msg_lower = user_message.strip().lower()
+            is_confirm = msg_lower in (
+                "yes",
+                "sure",
+                "ok",
+                "do it",
+                "proceed",
+                "confirm",
+                "yeah",
+                "yep",
+                "approve",
+            )
+            is_deny = msg_lower in (
+                "no",
+                "stop",
+                "cancel",
+                "never mind",
+                "don't",
+                "dont",
+                "nah",
+            )
+            if is_confirm:
+                await redis_client.delete(pending_key)
+                result = await self._execute_tool(
+                    pending_data["action_type"],
+                    {
+                        "product_id": pending_data.get("product_id", ""),
+                        "quantity": pending_data.get("quantity", 1),
+                    },
+                )
+                response = await self._format_response(user_message, result)
+                yield response
+                return
+            if is_deny:
+                await redis_client.delete(pending_key)
+                yield {
+                    "type": "response",
+                    "text": "Cancelled that action.",
+                    "options": None,
+                }
+                return
+            await redis_client.delete(pending_key)
+
+        # Check fast path
+        fast_result = await self._check_fast_path(user_message)
+        if fast_result is not None:
+            await append_message_to_session(str(self.session_id), "user", user_message)
+            await append_message_to_session(
+                str(self.session_id), "assistant", fast_result.get("text", "")
+            )
+            yield fast_result
+            return
+
+        # Step 1: Intent classification (blocking - needs full JSON)
+        step_start = time.perf_counter()
+        facts_str = await self._get_facts(user_message)
+        history = await get_session_history(str(self.session_id))
+        history_str = "\n".join(
+            [f"{msg['role']}: {msg['content']}" for msg in history[-6:]]
+        )
+        tool_descs = "\n".join(
+            [f"  - {name}: {desc}" for name, desc in TOOL_DESCRIPTIONS.items()]
+        )
+
+        intent_response = await call_llm(
+            system_prompt="You are a precise intent classifier.",
+            user_prompt=INTENT_PROMPT.format(
+                tool_descriptions=tool_descs, facts=facts_str, history=history_str
+            )
+            + f"\n\nUser message: '{user_message}'",
+            temperature=0.0,
+            max_tokens=1024,
+            call_type="intent_classifier",
+        )
+
+        if not intent_response:
+            yield {
+                "type": "response",
+                "text": "I had trouble understanding that. Could you rephrase?",
+                "options": None,
+            }
+            return
+
+        try:
+            extracted = extract_json_from_response(intent_response)
+            intent_data = json.loads(extracted)
+        except (json.JSONDecodeError, ValueError):
+            yield {
+                "type": "response",
+                "text": "I had trouble understanding that. Could you rephrase?",
+                "options": None,
+            }
+            return
+
+        selected_tool = intent_data.get("tool", "out_of_scope")
+        params = intent_data.get("params", {})
+        fact_to_remember = intent_data.get("fact_to_remember")
+        fact_category = intent_data.get("fact_category")
+
+        logger.info(
+            f"[VOICE STREAM] Intent: {selected_tool} ({time.perf_counter() - step_start:.2f}s)"
+        )
+
+        # Handle out of scope
+        if selected_tool == "out_of_scope":
+            out_prompt = (
+                f"The user said: '{user_message}'. "
+                "You are GroceryGenie, a friendly AI grocery shopping assistant. "
+                "Briefly acknowledge what the user said in 1 warm sentence, then politely offer to help."
+            )
+            response_text = await call_llm(
+                system_prompt="You are GroceryGenie, a helpful grocery shopping assistant.",
+                user_prompt=out_prompt,
+                temperature=0.3,
+                max_tokens=150,
+                call_type="out_of_scope_response",
+            )
+            if not response_text or not response_text.strip():
+                response_text = "I'm your GroceryGenie shopping assistant! How can I help you today?"
+            yield {"type": "response", "text": response_text.strip(), "options": None}
+            return
+
+        # Store fact if found
+        if (
+            fact_to_remember
+            and isinstance(fact_to_remember, str)
+            and fact_to_remember.strip()
+        ):
+            await self._store_fact(fact_to_remember, fact_category)
+
+        # RBAC check
+        if selected_tool != "out_of_scope":
+            try:
+                check_tool_permission(selected_tool, self.user_role)
+            except PermissionError as e:
+                err_str = str(e)
+                needed_role = "seller"
+                if "requires '" in err_str:
+                    needed_role = err_str.split("requires '")[1].split("'", maxsplit=1)[
+                        0
+                    ]
+                result = await self._handle_role_switch_request(
+                    user_message, selected_tool, needed_role
+                )
+                yield result
+                return
+
+        # Handle quantity-pending for add_to_cart
+        if selected_tool == "add_to_cart":
+            quantity = params.get("quantity")
+            if quantity is None:
+                product_id = params.get("product_id", "")
+                result = await self._ask_for_quantity(product_id, user_message)
+                yield result
+                return
+
+        # Handle missing product_id for update_cart_quantity or remove_from_cart
+        if selected_tool in ("update_cart_quantity", "remove_from_cart"):
+            pid = params.get("product_id")
+            if not pid:
+                cart_res = await self._execute_tool("view_cart", {})
+                if (
+                    isinstance(cart_res, dict)
+                    and "items" in cart_res
+                    and cart_res["items"]
+                ):
+                    options = []
+                    for item in cart_res["items"]:
+                        item_pid = item.get("product_id", "")
+                        item_name = item.get("name", "")
+                        if item_pid:
+                            options.append(
+                                {
+                                    "label": item_name,
+                                    "value": item_pid,
+                                    "description": f"Currently {item.get('quantity', 1)} in cart",
+                                }
+                            )
+                    action_label = (
+                        "update the quantity for"
+                        if selected_tool == "update_cart_quantity"
+                        else "remove"
+                    )
+                    yield {
+                        "type": "options_response",
+                        "text": f"Which item would you like to {action_label}?",
+                        "options": options,
+                        "free_input_allowed": True,
+                    }
+                    return
+                yield {
+                    "type": "response",
+                    "text": "Your cart is currently empty.",
+                    "options": None,
+                }
+                return
+
+        # Handle address collection
+        if selected_tool == "manage_addresses":
+            action = params.get("action", "list")
+            if action == "add":
+                addr_data = params.get("address_data") or {}
+                line1 = addr_data.get("line1") or addr_data.get("street")
+                city = addr_data.get("city")
+                if not line1 or not city:
+                    result = await self._start_address_collect_flow(
+                        addr_data, user_message
+                    )
+                    yield result
+                    return
+
+        # Handle seller_create_product missing name
+        if selected_tool == "seller_create_product":
+            name = params.get("name")
+            if not name:
+                yield {
+                    "type": "response",
+                    "text": "Please specify the product name, description, category, price, and stock.",
+                    "options": None,
+                }
+                return
+
+        # Step 2: Execute tool (blocking)
+        step_start = time.perf_counter()
+        result = await self._execute_tool(selected_tool, params)
+        logger.info(
+            f"[VOICE STREAM] Tool executed ({selected_tool}) in {time.perf_counter() - step_start:.2f}s"
+        )
+
+        # Check for too_many results
+        if isinstance(result, dict) and result.get("too_many"):
+            narrowing_result = await self._handle_too_many_results(result, user_message)
+            yield narrowing_result
+            return
+
+        # Step 3: Stream response formatting via LLM, buffering into sentences
+        # For built-in formatters (cart, orders, addresses, etc.), yield the full text
+        if isinstance(result, dict) and "message" in result and "success" in result:
+            yield {"type": "response", "text": result["message"], "options": None}
+            return
+
+        if isinstance(result, dict) and result.get("empty"):
+            yield {
+                "type": "response",
+                "text": result.get("message", "No results found."),
+                "options": None,
+            }
+            return
+
+        # Check for built-in formatters
+        built_in = await self._format_response(user_message, result)
+        if built_in.get("type") == "options_response":
+            yield built_in
+            return
+
+        text = built_in.get("text", "")
+        if text:
+            # For voice, yield the full text as a single sentence event
+            # The TTS will handle sentence-level synthesis
+            yield {"type": "response", "text": text, "options": None}
+
+        # Store in session
+        await append_message_to_session(str(self.session_id), "user", user_message)
+        await append_message_to_session(str(self.session_id), "assistant", text)
+
+        total_time = time.perf_counter() - turn_start_time
+        logger.info(f"[VOICE STREAM] Turn completed in {total_time:.2f}s")
 
     async def execute_approved_mutation(
         self, action: str, payload: dict[str, Any]

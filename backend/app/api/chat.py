@@ -60,6 +60,18 @@ async def sse_generator(
         if result["type"] == "permission_request":
             # Emit permission request
             yield f"event: permission_request\ndata: {json.dumps(result)}\n\n"
+        elif result["type"] == "role_switch_request":
+            # Emit role switch request as an options_request with special type
+            role_switch_data = {
+                "type": "role_switch_request",
+                "text": result.get("text", ""),
+                "summary": result.get("summary", ""),
+                "options": result.get("options", []),
+                "needed_role": result.get("needed_role", "seller"),
+                "original_tool": result.get("original_tool", ""),
+                "free_input_allowed": False,
+            }
+            yield f"event: message\ndata: {json.dumps(role_switch_data)}\n\n"
         elif result.get("type") == "options_response":
             # Emit options request
             options_data = {
@@ -70,16 +82,27 @@ async def sse_generator(
             }
             yield f"event: message\ndata: {json.dumps(options_data)}\n\n"
         else:
-            # It's a standard response, simulate token streaming for smooth UI typing effect
+            # It's a standard response - stream tokens in real time
             full_text = result.get("text", "")
 
-            # Yield chunks of words
-            words = full_text.split(" ")
-            for i, word in enumerate(words):
-                chunk = word + (" " if i < len(words) - 1 else "")
-                data = {"type": "delta", "text": chunk}
+            # For simple/short responses (like "Product added to cart"), yield all at once
+            # For longer responses, stream via LLM for real-time effect
+            if len(full_text) < 100 or result.get("options"):
+                # Short response or has options: yield all at once
+                data = {"type": "delta", "text": full_text}
                 yield f"event: message\ndata: {json.dumps(data)}\n\n"
-                await asyncio.sleep(0.04)  # typing effect delay
+            else:
+                # Stream the response text in chunks for real-time UX
+                # Split into reasonable chunks (words or small groups)
+                words = full_text.split(" ")
+                chunk_size = max(1, len(words) // 20)  # ~20 chunks total
+                for i in range(0, len(words), chunk_size):
+                    chunk = " ".join(words[i : i + chunk_size])
+                    if i + chunk_size < len(words):
+                        chunk += " "
+                    data = {"type": "delta", "text": chunk}
+                    yield f"event: message\ndata: {json.dumps(data)}\n\n"
+                    await asyncio.sleep(0.02)  # minimal delay for smooth rendering
 
             # If there's a navigation intent, emit it at the end
             if result.get("navigate_to"):

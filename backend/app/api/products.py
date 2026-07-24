@@ -406,6 +406,7 @@ async def update_product(
 
     # Invalidate specific product cache and all lists
     await invalidate_product_cache(str(product.id))
+    await invalidate_all_products_lists()
 
     # Re-trigger indexing
     background_tasks.add_task(trigger_product_indexing, product.id)
@@ -435,6 +436,7 @@ async def delete_product(
 
     # Invalidate specific product cache and all lists
     await invalidate_product_cache(str(product.id))
+    await invalidate_all_products_lists()
 
     return {"status": "success", "detail": "Product deactivated."}
 

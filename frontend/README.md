@@ -106,40 +106,40 @@ npm run typecheck    # TypeScript only
 
 ```
 frontend/
-├── public/                   # Static assets
+├── public/                   # Static assets (favicon, icons)
 ├── src/
 │   ├── main.tsx              # React entry point
 │   ├── App.tsx               # Root component (routing, layout, navigation)
-│   ├── index.css             # Tailwind + global styles
+│   ├── index.css             # Tailwind + global styles + dark mode
 │   ├── assets/               # Images, SVGs
 │   ├── components/           # Shared components
-│   │   ├── ChatBubble.tsx    # (Removed - replaced by Agent page)
+│   │   ├── ChatBubble.tsx    # Floating chat bubble (legacy, replaced by Agent page)
 │   │   ├── CustomDialog.tsx  # Reusable dialog
-│   │   └── DataTable.tsx     # Reusable data table
+│   │   └── DataTable.tsx     # Reusable data table with sorting/filtering/export
 │   ├── contexts/
 │   │   └── VoiceSessionContext.tsx  # Voice WebSocket provider
 │   ├── pages/
-│   │   ├── Agent.tsx         # 🆕 Full AI Assistant page (text + voice)
+│   │   ├── Agent.tsx         # Full AI Assistant page (text + voice)
 │   │   ├── Cart.tsx          # Shopping cart
-│   │   ├── Catalog.tsx       # Product catalog with filters
+│   │   ├── Catalog.tsx       # Product catalog with filters + infinite scroll
 │   │   ├── Checkout.tsx      # Checkout flow
 │   │   ├── ErrorPage.tsx     # Global error display
 │   │   ├── FulfillmentQueue.tsx  # Seller order fulfillment
-│   │   ├── Home.tsx          # Landing page
-│   │   ├── InventoryManagement.tsx # Seller inventory
-│   │   ├── ItemDetail.tsx    # Product detail page
-│   │   ├── Login.tsx         # Authentication
+│   │   ├── Home.tsx          # Landing page with featured products
+│   │   ├── InventoryManagement.tsx # Seller inventory with CRUD
+│   │   ├── ItemDetail.tsx    # Product detail page + RAG Q&A + reviews
+│   │   ├── Login.tsx         # Authentication (Google OAuth + dev bypass)
 │   │   ├── Maintenance.tsx   # Backend unavailable page
-│   │   ├── Orders.tsx        # Customer order history
-│   │   ├── SellerAnalysis.tsx # Seller analytics
-│   │   ├── SellerDashboard.tsx # Seller dashboard
-│   │   └── Settings.tsx      # User settings + role switch
+│   │   ├── Orders.tsx        # Customer order history + ratings
+│   │   ├── SellerAnalysis.tsx # Seller analytics (revenue, categories, trends)
+│   │   ├── SellerDashboard.tsx # Seller dashboard (KPI cards, pending orders)
+│   │   └── Settings.tsx      # User settings (theme, role, addresses, facts)
 │   ├── services/
-│   │   └── api.ts            # Axios-based API client
+│   │   └── api.ts            # Axios-based API client with all services
 │   └── store/
-│       └── uiStore.ts        # Zustand UI state
+│       └── uiStore.ts        # Zustand UI state (theme, session, health)
 ├── index.html                # HTML entry point
-├── vite.config.ts            # Vite configuration
+├── vite.config.ts            # Vite configuration (proxy to backend)
 ├── tailwind.config.js        # Tailwind CSS configuration
 ├── tsconfig.json             # TypeScript configuration
 ├── eslint.config.js          # ESLint configuration
@@ -154,17 +154,17 @@ frontend/
 | Route | Page | Purpose | Access |
 |-------|------|---------|--------|
 | `/` | Home | Landing page with featured products | Customer |
-| `/agent` | **Agent** | 🆕 Full AI Assistant (text + voice chat) | All users |
-| `/items` | Catalog | Product listing with filters | Customer |
-| `/items/:id` | Item Detail | Product details + RAG Q&A | Customer |
+| `/agent` | **Agent** | Full AI Assistant (text + voice chat) | All users |
+| `/items` | Catalog | Product listing with filters + infinite scroll | Customer |
+| `/items/:id` | Item Detail | Product details + RAG Q&A + reviews | Customer |
 | `/cart` | Cart | Shopping cart management | Customer |
 | `/checkout` | Checkout | Order placement flow | Customer |
-| `/orders` | Orders | Order history and tracking | Customer |
-| `/settings` | Settings | Profile, theme, role switch | All users |
-| `/seller` | Seller Dashboard | Business overview | Seller |
-| `/fulfillment` | Fulfillment Queue | Order processing | Seller |
-| `/inventory` | Inventory | Product management | Seller |
-| `/analysis` | Analysis | Sales analytics | Seller |
+| `/orders` | Orders | Order history and tracking + ratings | Customer |
+| `/settings` | Settings | Profile, theme, role switch, addresses, facts | All users |
+| `/seller` | Seller Dashboard | Business overview (KPI cards) | Seller |
+| `/fulfillment` | Fulfillment Queue | Order processing (status transitions) | Seller |
+| `/inventory` | Inventory | Product management (CRUD + image upload) | Seller |
+| `/analysis` | Analysis | Sales analytics (revenue, categories, trends) | Seller |
 | `/maintenance` | Maintenance | Backend unavailable | All |
 | `/error` | Error | Application error | All |
 
@@ -182,6 +182,7 @@ The flagship AI Assistant page replaces the old floating ChatBubble overlay with
 - **Structured Options**: Agent can present clickable choices
 - **Free Input**: Custom text alongside structured options
 - **Permission Cards**: Rich UI for approving/denying actions
+- **Role Switch Cards**: Structured UI for role switching with confirm/deny
 - **Navigation Suggestions**: Agent can suggest page navigation
 - **Loading States**: Animated dots during processing
 - **Error Handling**: Graceful error recovery
@@ -194,6 +195,7 @@ The flagship AI Assistant page replaces the old floating ChatBubble overlay with
    - `delta`: Word chunks for real-time display
    - `permission_request`: Action approval needed
    - `options_request`: Structured choices from agent
+   - `role_switch_request`: Role change confirmation
    - `navigate_to`: Suggested page navigation
 3. Frontend renders each event type appropriately
 
@@ -316,14 +318,10 @@ Built with **Tailwind CSS v3**:
 // tailwind.config.js
 module.exports = {
   content: ['./src/**/*.{ts,tsx}'],
-  darkMode: 'class',  // or use data-theme attribute
+  darkMode: ['class', '[data-theme="dark"]'],
   theme: {
-    extend: {
-      colors: {
-        // Custom purple/indigo gradient palette
-      }
-    }
-  }
+    extend: {},
+  },
 };
 ```
 

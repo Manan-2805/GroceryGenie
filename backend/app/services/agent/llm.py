@@ -3,6 +3,7 @@ import json
 import logging
 import random
 import time
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from openai import APITimeoutError, AsyncOpenAI
@@ -333,6 +334,164 @@ async def call_llm(
     )
     # Return empty string instead of raising - let callers handle gracefully
     return ""
+
+
+async def call_llm_stream(
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.1,
+    max_tokens: int = 512,
+    timeout: float = DEFAULT_TIMEOUT,
+    call_type: str = "llm_stream",
+    provider_name: str | None = None,
+) -> AsyncGenerator[str, None]:
+    """Call LLM with streaming (SSE mode). Yields tokens as they arrive.
+
+    Same retry/fallback logic as call_llm() but yields text chunks progressively.
+    Collects the full response for logging purposes.
+
+    Yields:
+        str: Text tokens as they arrive from the LLM.
+    """
+    providers = get_all_providers()
+
+    if provider_name:
+        providers = [p for p in providers if p["name"] == provider_name]
+        if not providers:
+            logger.warning(f"Requested provider '{provider_name}' not found in config")
+            return
+
+    last_error: Exception | None = None
+    start_time = time.monotonic()
+    full_response_parts: list[str] = []
+
+    for provider_idx, provider_config in enumerate(providers):
+        provider_name = provider_config["name"]
+        base_url = provider_config["base_url"]
+        api_key = provider_config["api_key"]
+        model = provider_config["model"]
+        provider_timeout = provider_config.get("timeout", timeout)
+        safe_temperature = get_safe_temperature(provider_config, temperature)
+
+        client = get_llm_client(provider_name, base_url, api_key, provider_timeout)
+
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": safe_temperature,
+            "max_tokens": max_tokens,
+            "timeout": provider_timeout,
+            "stream": True,
+        }
+
+        logger.info(
+            f"Calling LLM STREAM provider '{provider_name}' (model={model}, temp={safe_temperature}, "
+            f"call_type={call_type}, provider_idx={provider_idx})"
+        )
+
+        for attempt in range(MAX_RETRIES + 1):
+            full_response_parts.clear()
+            try:
+                stream = await asyncio.wait_for(
+                    client.chat.completions.create(**kwargs),
+                    timeout=provider_timeout,
+                )
+                async for chunk in stream:
+                    if chunk.choices and len(chunk.choices) > 0:
+                        delta = chunk.choices[0].delta
+                        if delta and delta.content:
+                            token = delta.content
+                            full_response_parts.append(token)
+                            yield token
+
+                duration_ms = (time.monotonic() - start_time) * 1000
+                full_text = "".join(full_response_parts)
+
+                # Log the successful call
+                log_llm_call(
+                    call_type=call_type,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    response=full_text.strip(),
+                    temperature=safe_temperature,
+                    max_tokens=max_tokens,
+                    duration_ms=duration_ms,
+                    extra={
+                        "provider": provider_name,
+                        "model": model,
+                        "attempt": attempt + 1,
+                        "provider_idx": provider_idx,
+                        "stream": True,
+                    },
+                )
+
+                logger.info(
+                    f"LLM stream successful: provider='{provider_name}', model={model}, "
+                    f"call_type={call_type}, duration={duration_ms:.0f}ms, "
+                    f"chars={len(full_text)}, attempt={attempt + 1}"
+                )
+                return  # Successful stream, exit generator
+
+            except (TimeoutError, APITimeoutError):
+                last_error = TimeoutError(
+                    f"LLM stream timed out after {provider_timeout}s"
+                )
+                if attempt < MAX_RETRIES:
+                    wait = _compute_retry_delay(attempt)
+                    logger.warning(
+                        f"LLM stream timeout on '{provider_name}' (attempt {attempt + 1}), "
+                        f"retrying in {wait:.1f}s..."
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                logger.warning(
+                    f"LLM stream provider '{provider_name}' timed out after {MAX_RETRIES + 1} attempts"
+                )
+
+            except Exception as e:
+                last_error = e
+                if _is_auth_error(e):
+                    logger.error(
+                        f"LLM auth error on provider '{provider_name}': {e}. "
+                        f"Skipping retries."
+                    )
+                    break
+                if attempt < MAX_RETRIES:
+                    wait = _compute_retry_delay(attempt)
+                    logger.warning(
+                        f"LLM stream error on '{provider_name}': {e} (attempt {attempt + 1}), "
+                        f"retrying in {wait:.1f}s..."
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                logger.warning(
+                    f"LLM stream provider '{provider_name}' failed after {MAX_RETRIES + 1} attempts: {e}"
+                )
+
+        if provider_idx < len(providers) - 1:
+            logger.info("Falling back to next LLM provider for stream...")
+
+    # All providers exhausted
+    duration_ms = (time.monotonic() - start_time) * 1000
+    error_msg = (
+        str(last_error)
+        if last_error
+        else "LLM stream failed after all providers and retries"
+    )
+    log_llm_call(
+        call_type=call_type,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        response="",
+        temperature=temperature,
+        max_tokens=max_tokens,
+        duration_ms=duration_ms,
+        error=error_msg,
+        extra={"providers_tried": [p["name"] for p in providers]},
+    )
 
 
 def _compute_retry_delay(attempt: int) -> float:
