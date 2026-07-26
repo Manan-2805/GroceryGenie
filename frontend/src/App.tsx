@@ -1,16 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ShoppingCart, Settings as SettingsIcon, LogOut, ShoppingBag } from 'lucide-react';
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  BrowserRouter,
-  Routes,
-  Route,
-  Link,
-  useNavigate,
-  useLocation,
-  Navigate,
-} from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 
+import { AppSidebar } from './components/AppSidebar';
 import { VoiceSessionProvider } from './contexts/VoiceSessionContext';
 import { Agent } from './pages/Agent';
 import { Cart } from './pages/Cart';
@@ -32,7 +24,6 @@ import { useUIStore } from './store/uiStore';
 
 const queryClient = new QueryClient();
 
-// Internal Listener for programmatical navigation intents emitted by the Agent
 const NavigationListener: React.FC = () => {
   const navigate = useNavigate();
   useEffect(() => {
@@ -107,14 +98,14 @@ export const AppContent: React.FC = () => {
     void checkHealth();
   }, [checkHealth, fetchProfile]);
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     try {
       await authService.logout();
       setUser(null);
     } catch (e) {
       console.error(e);
     }
-  };
+  }, []);
 
   async function handleRoleChange(newRole: 'customer' | 'seller') {
     try {
@@ -131,161 +122,84 @@ export const AppContent: React.FC = () => {
     onRoleChange: handleRoleChange,
   };
 
-  // Initialize Dark Theme configuration
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
   if (loading && !isMaintenancePage && !isErrorPage) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-950 text-gray-400 text-sm font-semibold">
+      <div className="min-h-screen flex items-center justify-center bg-app text-muted text-sm font-medium">
         Loading GroceryGenie application...
       </div>
     );
   }
 
-  if (user === null && !isMaintenancePage && !isErrorPage) {
+  if (isMaintenancePage) {
+    return <Maintenance />;
+  }
+
+  if (isErrorPage) {
+    return <ErrorPage />;
+  }
+
+  if (user === null) {
     return <Login onLoginSuccess={fetchProfile} />;
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-white dark:bg-[#0f1015] text-gray-800 dark:text-gray-200 transition-colors duration-300">
+    <div className="min-h-screen flex bg-app text-heading transition-colors duration-300">
       <NavigationListener />
+      <AppSidebar user={user} onLogout={handleLogout} />
 
-      {/* Global Navigation Header */}
-      <header className="sticky top-0 z-40 border-b border-gray-100 dark:border-gray-900 bg-white/80 dark:bg-[#0f1015]/80 backdrop-blur-md">
-        <div className="w-full px-4 md:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <Link
-              to={user?.role === 'seller' ? '/seller' : '/'}
-              className="text-xl font-black bg-gradient-to-r from-purple-600 to-indigo-600 bg-clip-text text-transparent"
-            >
-              GroceryGenie
-            </Link>
-
-            <nav className="hidden md:flex items-center gap-6 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-450">
-              <Link to="/agent" className="hover:text-purple-600 transition">
-                Assistant
-              </Link>
-              {user?.role === 'customer' && (
-                <Link to="/items" className="hover:text-purple-600 transition">
-                  Catalog
-                </Link>
-              )}
-              {user?.role === 'seller' && (
-                <>
-                  <Link to="/seller" className="hover:text-purple-600 transition">
-                    Dashboard
-                  </Link>
-                  <Link to="/fulfillment" className="hover:text-purple-600 transition">
-                    Fulfillment Queue
-                  </Link>
-                  <Link to="/inventory" className="hover:text-purple-600 transition">
-                    Inventory
-                  </Link>
-                  <Link to="/analysis" className="hover:text-purple-600 transition">
-                    Analysis
-                  </Link>
-                </>
-              )}
-            </nav>
-          </div>
-
-          <div className="flex items-center gap-4">
-            {/* Cart & Orders Icons (Customer Only) */}
-            {user?.role === 'customer' && (
-              <>
-                <Link
-                  to="/orders"
-                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg relative text-gray-600 dark:text-gray-400"
-                >
-                  <ShoppingBag size={20} />
-                </Link>
-                <Link
-                  to="/cart"
-                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg relative text-gray-600 dark:text-gray-400"
-                >
-                  <ShoppingCart size={20} />
-                </Link>
-              </>
-            )}
-
-            {/* Profile Info */}
-            {user && (
-              <div className="flex items-center gap-2 border-l pl-4 dark:border-gray-900">
-                <div className="text-right hidden sm:block">
-                  <p className="text-xs font-bold text-gray-800 dark:text-gray-200">{user.name}</p>
-                  <p className="text-[10px] text-purple-600 capitalize font-medium">{user.role}</p>
-                </div>
-
-                <Link
-                  to="/settings"
-                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg text-gray-600 dark:text-gray-400"
-                >
-                  <SettingsIcon size={20} />
-                </Link>
-
-                <button
-                  id="logout-btn"
-                  onClick={handleLogout}
-                  className="p-2 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg text-red-500"
-                >
-                  <LogOut size={20} />
-                </button>
-              </div>
-            )}
-          </div>
+      <main className="flex-1 min-w-0 h-screen overflow-y-auto pt-14 md:pt-0">
+        <div className="w-full max-w-7xl mx-auto px-4 md:px-8 py-6 pb-24">
+          <Routes>
+            <Route
+              path="/"
+              element={user.role === 'seller' ? <Navigate to="/seller" /> : <Home />}
+            />
+            <Route
+              path="/items"
+              element={user.role === 'seller' ? <Navigate to="/seller" /> : <Catalog />}
+            />
+            <Route
+              path="/items/:id"
+              element={user.role === 'seller' ? <Navigate to="/seller" /> : <ItemDetail />}
+            />
+            <Route
+              path="/cart"
+              element={user.role === 'customer' ? <Cart /> : <Navigate to="/seller" />}
+            />
+            <Route
+              path="/checkout"
+              element={user.role === 'customer' ? <Checkout /> : <Navigate to="/seller" />}
+            />
+            <Route
+              path="/orders"
+              element={user.role === 'customer' ? <Orders /> : <Navigate to="/seller" />}
+            />
+            <Route path="/settings" element={<Settings {...settingsProps} />} />
+            <Route
+              path="/seller"
+              element={user.role === 'seller' ? <SellerDashboard /> : <Navigate to="/items" />}
+            />
+            <Route
+              path="/fulfillment"
+              element={user.role === 'seller' ? <FulfillmentQueue /> : <Navigate to="/items" />}
+            />
+            <Route
+              path="/inventory"
+              element={user.role === 'seller' ? <InventoryManagement /> : <Navigate to="/items" />}
+            />
+            <Route
+              path="/analysis"
+              element={user.role === 'seller' ? <SellerAnalysis /> : <Navigate to="/items" />}
+            />
+            <Route path="/agent" element={<Agent />} />
+            <Route path="/maintenance" element={<Maintenance />} />
+            <Route path="/error" element={<ErrorPage />} />
+          </Routes>
         </div>
-      </header>
-
-      {/* Main Page Layout Wrapper */}
-      <main className="flex-1 w-full px-4 md:px-8 pb-24 h-screen overflow-hidden">
-        <Routes>
-          <Route
-            path="/"
-            element={user?.role === 'seller' ? <Navigate to="/seller" /> : <Home />}
-          />
-          <Route
-            path="/items"
-            element={user?.role === 'seller' ? <Navigate to="/seller" /> : <Catalog />}
-          />
-          <Route
-            path="/items/:id"
-            element={user?.role === 'seller' ? <Navigate to="/seller" /> : <ItemDetail />}
-          />
-          <Route
-            path="/cart"
-            element={user?.role === 'customer' ? <Cart /> : <Navigate to="/seller" />}
-          />
-          <Route
-            path="/checkout"
-            element={user?.role === 'customer' ? <Checkout /> : <Navigate to="/seller" />}
-          />
-          <Route
-            path="/orders"
-            element={user?.role === 'customer' ? <Orders /> : <Navigate to="/seller" />}
-          />
-          <Route path="/settings" element={<Settings {...settingsProps} />} />
-          <Route
-            path="/seller"
-            element={user?.role === 'seller' ? <SellerDashboard /> : <Navigate to="/items" />}
-          />
-          <Route
-            path="/fulfillment"
-            element={user?.role === 'seller' ? <FulfillmentQueue /> : <Navigate to="/items" />}
-          />
-          <Route
-            path="/inventory"
-            element={user?.role === 'seller' ? <InventoryManagement /> : <Navigate to="/items" />}
-          />
-          <Route
-            path="/analysis"
-            element={user?.role === 'seller' ? <SellerAnalysis /> : <Navigate to="/items" />}
-          />
-          <Route path="/agent" element={<Agent />} />
-          <Route path="/maintenance" element={<Maintenance />} />
-          <Route path="/error" element={<ErrorPage />} />
-        </Routes>
       </main>
     </div>
   );

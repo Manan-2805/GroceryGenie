@@ -224,7 +224,7 @@ export const ItemDetail: React.FC = () => {
     return (
       <div className="p-8 text-center text-gray-400 space-y-4">
         <p>Product not found.</p>
-        <button onClick={() => navigate('/items')} className="text-purple-600 font-bold underline">
+        <button onClick={() => navigate('/items')} className="text-accent font-bold underline">
           Return to Catalog
         </button>
       </div>
@@ -236,14 +236,14 @@ export const ItemDetail: React.FC = () => {
       {/* Back button */}
       <button
         onClick={() => navigate(-1)}
-        className="flex items-center gap-2 text-sm text-gray-500 hover:text-purple-600 transition"
+        className="flex items-center gap-2 text-sm text-gray-500 hover:text-accent transition"
       >
         <ArrowLeft size={16} />
         <span>Back</span>
       </button>
 
       {/* Main product info split layout */}
-      <div className="flex flex-col md:flex-row gap-8 items-start border rounded-2xl glassmorphism p-6 shadow-md bg-white dark:bg-gray-900">
+      <div className="flex flex-col md:flex-row gap-8 items-start glass-card p-6">
         {/* Image */}
         <div className="w-full md:w-1/2 bg-gray-50 dark:bg-gray-950/40 p-8 rounded-xl flex items-center justify-center border dark:border-gray-800">
           <img
@@ -257,7 +257,7 @@ export const ItemDetail: React.FC = () => {
         <div className="flex-1 space-y-6 w-full">
           <div>
             <div className="flex justify-between items-center">
-              <span className="text-xs font-bold uppercase tracking-wider text-purple-600">
+              <span className="text-xs font-bold uppercase tracking-wider text-accent">
                 {product.category}
               </span>
               <span className="text-sm font-bold text-amber-500 flex items-center gap-0.5">
@@ -265,14 +265,14 @@ export const ItemDetail: React.FC = () => {
                 <Star size={14} className="fill-amber-400 text-amber-400" />
               </span>
             </div>
-            <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200 mt-2">
+            <h1 className="text-3xl font-semibold text-gray-800 dark:text-gray-200 mt-2">
               {product.name}
             </h1>
             <p className="text-sm text-gray-500 mt-3 leading-relaxed">{product.description}</p>
           </div>
 
           <div className="flex items-baseline gap-4">
-            <span className="text-4xl font-black text-purple-600 dark:text-purple-400">
+            <span className="text-4xl font-semibold text-accent dark:text-accent">
               €{product.price.toFixed(2)}
             </span>
             <span
@@ -322,7 +322,7 @@ export const ItemDetail: React.FC = () => {
                   void handleAddToCart();
                 }}
                 disabled={addingToCart}
-                className="flex-1 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold transition flex justify-center items-center gap-2 shadow-lg"
+                className="flex-1 py-3 bg-accent hover:bg-accent-hover text-white rounded-xl font-bold transition flex justify-center items-center gap-2 shadow-lg"
               >
                 <ShoppingCart size={18} />
                 <span>{addingToCart ? 'Adding...' : 'Add to Cart'}</span>
@@ -333,9 +333,9 @@ export const ItemDetail: React.FC = () => {
       </div>
 
       {/* Scoped Product Q&A / RAG Box */}
-      <div className="border rounded-2xl glassmorphism p-6 shadow-md space-y-4 bg-white dark:bg-gray-900">
-        <div className="flex items-center gap-2 font-extrabold text-lg text-gray-800 dark:text-gray-200 border-b pb-3 dark:border-gray-800">
-          <HelpCircle className="text-purple-600" />
+      <div className="glass-card p-6 space-y-4">
+        <div className="flex items-center gap-2 font-semibold text-lg text-gray-800 dark:text-gray-200 border-b pb-3 dark:border-gray-800">
+          <HelpCircle className="text-accent" />
           <span>Product Advisor Q&A</span>
         </div>
 
@@ -350,12 +350,12 @@ export const ItemDetail: React.FC = () => {
             value={qaInput}
             onChange={(e) => setQaInput(e.target.value)}
             placeholder="Is this product gluten-free? Does it contain milk?"
-            className="flex-1 px-4 py-2 border dark:border-gray-800 bg-transparent rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-600 text-xs text-gray-850 dark:text-gray-200"
+            className="flex-1 px-4 py-2 border dark:border-gray-800 bg-transparent rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs text-gray-850 dark:text-gray-200"
           />
           <button
             type="submit"
             disabled={qaLoading}
-            className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition"
+            className="px-5 py-2 bg-accent hover:bg-accent-hover text-white rounded-xl text-xs font-bold transition"
           >
             Ask
           </button>
@@ -364,16 +364,16 @@ export const ItemDetail: React.FC = () => {
         {/* Answer view */}
         {(qaLoading || (qaAnswer?.length ?? 0) > 0) && (
           <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-950/40 text-sm space-y-2 border border-gray-100 dark:border-gray-800">
-            <div className="font-semibold text-xs text-purple-600 dark:text-purple-400 flex items-center gap-1.5">
+            <div className="font-semibold text-xs text-accent dark:text-accent flex items-center gap-1.5">
               <MessageCircle size={14} />
               <span>Advisor Response</span>
             </div>
 
             {qaLoading && (qaAnswer?.length ?? 0) === 0 ? (
               <div className="flex gap-1 py-1">
-                <span className="w-1.5 h-1.5 bg-purple-600 rounded-full animate-bounce"></span>
-                <span className="w-1.5 h-1.5 bg-purple-600 rounded-full animate-bounce [animation-delay:0.2s]"></span>
-                <span className="w-1.5 h-1.5 bg-purple-600 rounded-full animate-bounce [animation-delay:0.4s]"></span>
+                <span className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce"></span>
+                <span className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce [animation-delay:0.2s]"></span>
+                <span className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce [animation-delay:0.4s]"></span>
               </div>
             ) : (
               <p className="leading-relaxed text-gray-700 dark:text-gray-300 font-medium">
@@ -385,15 +385,15 @@ export const ItemDetail: React.FC = () => {
       </div>
 
       {/* Reviews and Star Breakdown Section */}
-      <div className="border rounded-2xl glassmorphism p-6 shadow-md space-y-6 bg-white dark:bg-gray-900">
-        <h3 className="font-extrabold text-lg text-gray-800 dark:text-gray-200 border-b pb-3 dark:border-gray-800">
+      <div className="glass-card p-6 space-y-6">
+        <h3 className="font-semibold text-lg text-gray-800 dark:text-gray-200 border-b pb-3 dark:border-gray-800">
           Customer Reviews
         </h3>
 
         <div className="flex flex-col md:flex-row gap-8 items-start">
           {/* Average Rating Summary */}
           <div className="flex flex-col items-center justify-center p-6 border dark:border-gray-800 rounded-2xl bg-gray-50 dark:bg-gray-950/20 text-center w-full md:w-fit min-w-[200px]">
-            <span className="text-5xl font-black text-purple-600 dark:text-purple-400">
+            <span className="text-5xl font-semibold text-accent dark:text-accent">
               {(product.avg_rating || 0).toFixed(1)}
             </span>
             <div className="flex gap-1.5 mt-2">
@@ -435,7 +435,7 @@ export const ItemDetail: React.FC = () => {
                   setShowAllReviews(true);
                   void fetchReviews(1, false);
                 }}
-                className="text-xs font-bold text-purple-600 hover:text-purple-700 uppercase"
+                className="text-xs font-bold text-accent hover:text-accent uppercase"
               >
                 Show All Reviews
               </button>

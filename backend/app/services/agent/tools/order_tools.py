@@ -1,5 +1,6 @@
 """Order tools - pure Python, no LLM calls."""
 
+import datetime
 from typing import Any
 from uuid import UUID
 
@@ -11,6 +12,66 @@ from app.db.models.cart import CartItem
 from app.db.models.enums import OrderStatus
 from app.db.models.order import Order, OrderItem
 from app.db.models.product import Product
+
+
+async def get_order_detail(
+    db: AsyncSession,
+    user_id: UUID,
+    order_id: str,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Fetch full detail for a single order owned by the user.
+
+    Returns items with quantities/prices, current status, delivery address
+    snapshot, and status timestamps (placed_at, packed_at, etc.).
+    """
+    try:
+        order_uuid = UUID(order_id)
+    except (ValueError, AttributeError):
+        return {"success": False, "message": "Invalid order ID."}
+
+    order_result = await db.execute(
+        select(Order).where(
+            Order.id == order_uuid,
+            Order.customer_id == user_id,
+        )
+    )
+    order = order_result.scalar_one_or_none()
+    if not order:
+        return {"success": False, "message": "Order not found."}
+
+    items_result = await db.execute(
+        select(OrderItem).where(OrderItem.order_id == order.id)
+    )
+    items = list(items_result.scalars().all())
+    item_list = []
+    for item in items:
+        p_res = await db.execute(select(Product).where(Product.id == item.product_id))
+        product = p_res.scalar_one_or_none()
+        item_list.append(
+            {
+                "product_name": product.name if product else "Unknown",
+                "quantity": item.quantity,
+                "price_at_purchase": float(item.price_at_purchase),
+                "subtotal": float(item.price_at_purchase) * item.quantity,
+            }
+        )
+
+    def _fmt_ts(ts: datetime.datetime | None) -> str | None:
+        return ts.isoformat() if ts else None
+
+    return {
+        "order_detail": True,  # discriminator for the formatter
+        "id": str(order.id),
+        "status": order.status.value,
+        "total": float(order.total),
+        "created_at": _fmt_ts(order.created_at),
+        "packed_at": _fmt_ts(order.packed_at),
+        "out_for_delivery_at": _fmt_ts(order.out_for_delivery_at),
+        "delivered_at": _fmt_ts(order.delivered_at),
+        "delivery_address": order.delivery_address or {},
+        "items": item_list,
+    }
 
 
 async def view_orders(
@@ -28,7 +89,7 @@ async def view_orders(
     orders = list(order_result.scalars().all())
 
     if not orders:
-        return {"empty": True, "message": "No orders found."}
+        return {"empty": True, "message": "You have no orders yet."}
 
     result = []
     for order in orders:
@@ -46,7 +107,7 @@ async def view_orders(
                 {
                     "product_name": product.name if product else "Unknown",
                     "quantity": item.quantity,
-                    "price": float(product.price),
+                    "price_at_purchase": float(item.price_at_purchase),
                 }
             )
 
@@ -94,7 +155,18 @@ async def place_order(
             "message": "No default address found. Please add an address first.",
         }
 
-    # Calculate total
+    # Build delivery_address JSONB snapshot from the Address record
+    delivery_address_snapshot: dict[str, Any] = {
+        "label": address.label,
+        "line1": address.line1,
+        "line2": address.line2 or "",
+        "city": address.city,
+        "state": address.state,
+        "postal_code": address.postal_code,
+        "country": address.country,
+    }
+
+    # Calculate total and validate stock
     total = Decimal("0.00")
     order_items_data = []
     for cart_item in cart_items:
@@ -109,7 +181,8 @@ async def place_order(
                 {
                     "product_id": product.id,
                     "quantity": cart_item.quantity,
-                    "price": product.price,
+                    "price_at_purchase": product.price,
+                    "product_name": product.name,
                 }
             )
             product.stock -= cart_item.quantity
@@ -119,12 +192,12 @@ async def place_order(
                 "message": f"Insufficient stock for {product.name}. Only {product.stock} available.",
             }
 
-    # Create order
+    # Create order with correct field names matching the Order model
     order = Order(
-        user_id=user_id,
-        address_id=address.id,
+        customer_id=user_id,
         status=OrderStatus.placed,
-        total_amount=total,
+        total=total,
+        delivery_address=delivery_address_snapshot,
     )
     db.add(order)
     await db.flush()
@@ -134,7 +207,7 @@ async def place_order(
             order_id=order.id,
             product_id=item_data["product_id"],
             quantity=item_data["quantity"],
-            price=item_data["price"],
+            price_at_purchase=item_data["price_at_purchase"],
         )
         db.add(order_item)
 

@@ -164,15 +164,15 @@ export function DataTable<T extends Record<string, unknown>>({
   };
 
   return (
-    <div className="w-full flex flex-col bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden shadow-sm">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center gap-4 bg-gray-50 dark:bg-gray-900/50">
-        <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+    <div className="w-full flex flex-col glass-card overflow-hidden">
+      <div className="p-4 border-b border-border/60 flex justify-between items-center gap-4 bg-surface/50">
+        <span className="text-xs font-medium text-muted">
           Showing {processedData.length} of {data.length} entries
         </span>
         <button
           onClick={handleExportCSV}
           disabled={processedData.length === 0}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:hover:bg-purple-600 text-white rounded-lg text-xs font-bold transition shadow-sm"
+          className="btn-primary py-1.5 px-3 disabled:opacity-40"
         >
           <Download size={14} />
           <span>Export CSV</span>
@@ -182,27 +182,25 @@ export function DataTable<T extends Record<string, unknown>>({
       <div className={`w-full overflow-x-auto overflow-y-auto ${maxHeight}`}>
         <table className="w-full text-left border-collapse min-w-[600px]">
           <thead>
-            <tr className="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider sticky top-0 z-10">
+            <tr className="bg-surface/80 border-b border-border text-xs font-semibold text-muted uppercase tracking-wider sticky top-0 z-10">
               {columns.map((col) => (
                 <th key={col.key} className="p-4 select-none">
                   <div className="flex flex-col gap-2">
                     <div
                       className={`flex items-center gap-1.5 ${
-                        col.sortable === true
-                          ? 'cursor-pointer hover:text-gray-950 dark:hover:text-white'
-                          : ''
+                        col.sortable === true ? 'cursor-pointer hover:text-heading' : ''
                       }`}
                       data-sort-key={col.key}
                       onClick={col.sortable === true ? handleSortClick : undefined}
                     >
                       <span>{col.header}</span>
                       {col.sortable === true && (
-                        <span className="text-gray-400">
+                        <span className="text-muted">
                           {sortKey === col.key ? (
                             sortDir === 'asc' ? (
-                              <ChevronUp size={14} className="text-purple-600" />
+                              <ChevronUp size={14} className="text-accent" />
                             ) : (
-                              <ChevronDown size={14} className="text-purple-600" />
+                              <ChevronDown size={14} className="text-accent" />
                             )
                           ) : (
                             <ChevronDown size={14} className="opacity-40" />
@@ -217,7 +215,7 @@ export function DataTable<T extends Record<string, unknown>>({
                           <select
                             value={typeof filters[col.key] === 'string' ? filters[col.key] : ''}
                             onChange={(event) => handleFilterChange(col.key, event.target.value)}
-                            className="w-full px-2 py-1 bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded text-[11px] font-medium text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-purple-600"
+                            className="glass-input w-full px-2 py-1 text-[11px] font-medium text-heading"
                           >
                             <option value="">All</option>
                             {(col.filterOptions ?? autoFilterOptions[col.key] ?? []).map(
@@ -234,7 +232,7 @@ export function DataTable<T extends Record<string, unknown>>({
                             placeholder="Filter..."
                             value={typeof filters[col.key] === 'string' ? filters[col.key] : ''}
                             onChange={(event) => handleFilterChange(col.key, event.target.value)}
-                            className="w-full px-2 py-1 bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded text-[11px] font-medium text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-purple-600"
+                            className="glass-input w-full px-2 py-1 text-[11px] font-medium text-heading"
                           />
                         )}
                       </div>
@@ -244,15 +242,12 @@ export function DataTable<T extends Record<string, unknown>>({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200 dark:divide-gray-800 text-sm">
+          <tbody className="divide-y divide-border/60 text-sm">
             {processedData.length === 0 ? (
               <tr>
-                <td
-                  colSpan={columns.length}
-                  className="p-8 text-center text-gray-500 dark:text-gray-400"
-                >
+                <td colSpan={columns.length} className="p-8 text-center text-muted">
                   <div className="flex flex-col items-center justify-center gap-2">
-                    <span className="font-semibold">{noDataMessage}</span>
+                    <span className="font-medium text-heading">{noDataMessage}</span>
                     <span className="text-xs opacity-75">
                       Try clearing filters or check back later
                     </span>
@@ -263,7 +258,7 @@ export function DataTable<T extends Record<string, unknown>>({
               processedData.map((item, rowIndex) => (
                 <tr
                   key={createRowKey(item, rowIndex)}
-                  className="hover:bg-gray-50/50 dark:hover:bg-gray-900/20 text-gray-700 dark:text-gray-300 transition"
+                  className="hover:bg-accent-bg/40 text-muted transition"
                 >
                   {columns.map((col) => {
                     const value = item[col.key];

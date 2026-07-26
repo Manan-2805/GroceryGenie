@@ -347,7 +347,7 @@ export const InventoryManagement: React.FC = () => {
         <div className="flex gap-1.5 justify-center">
           <button
             onClick={() => handleEditClick(item)}
-            className="p-1 text-purple-600 border border-purple-200 hover:bg-purple-50 dark:border-purple-900/40 dark:hover:bg-purple-950/20 rounded-lg transition"
+            className="p-1 text-accent border border-accent-border hover:bg-accent-bg dark:border-accent-border dark:hover:bg-accent-bg rounded-lg transition"
           >
             <PenLine size={14} />
           </button>
@@ -371,14 +371,14 @@ export const InventoryManagement: React.FC = () => {
       <div className="max-w-6xl mx-auto py-8 px-4 space-y-6">
         <div className="flex justify-between items-center gap-4">
           <div>
-            <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">Inventory</h1>
+            <h1 className="text-3xl font-semibold text-gray-800 dark:text-gray-200">Inventory</h1>
             <p className="text-sm text-gray-500">
               Manage catalog products, pricing, stock levels, and upload images
             </p>
           </div>
           <button
             onClick={() => setShowAddForm((prev) => !prev)}
-            className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-xs transition shadow-md shadow-purple-500/20"
+            className="flex items-center gap-1.5 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-xl font-bold text-xs transition shadow-md shadow-glass"
           >
             <Plus size={14} />
             <span>Add Product</span>
@@ -392,7 +392,7 @@ export const InventoryManagement: React.FC = () => {
             className="p-6 border dark:border-gray-900 rounded-2xl bg-white dark:bg-gray-900 grid grid-cols-1 md:grid-cols-3 gap-4 shadow-md"
           >
             <div className="md:col-span-3 flex justify-between items-center border-b pb-2 dark:border-gray-800">
-              <h4 className="text-xs font-bold uppercase text-purple-600 flex items-center gap-2">
+              <h4 className="text-xs font-bold uppercase text-accent flex items-center gap-2">
                 <Box size={14} />
                 <span>New Product Form</span>
               </h4>
@@ -413,7 +413,7 @@ export const InventoryManagement: React.FC = () => {
                 value={newProduct.name}
                 onChange={(e) => setNewProduct((p) => ({ ...p, name: e.target.value }))}
                 placeholder="Fresh Organic Strawberries"
-                className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
@@ -426,7 +426,7 @@ export const InventoryManagement: React.FC = () => {
                 value={newProduct.price}
                 onChange={(e) => setNewProduct((p) => ({ ...p, price: e.target.value }))}
                 placeholder="3.99"
-                className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
@@ -438,7 +438,7 @@ export const InventoryManagement: React.FC = () => {
                 value={newProduct.stock}
                 onChange={(e) => setNewProduct((p) => ({ ...p, stock: e.target.value }))}
                 placeholder="24"
-                className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
@@ -447,7 +447,7 @@ export const InventoryManagement: React.FC = () => {
               <select
                 value={newProduct.category}
                 onChange={(e) => setNewProduct((p) => ({ ...p, category: e.target.value }))}
-                className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 {categories.map((c) => (
                   <option key={c} value={c}>
@@ -463,7 +463,7 @@ export const InventoryManagement: React.FC = () => {
                 value={newProduct.description}
                 onChange={(e) => setNewProduct((p) => ({ ...p, description: e.target.value }))}
                 placeholder="Organic, sweet strawberries..."
-                className="w-full h-20 px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-955 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600 resize-none"
+                className="w-full h-20 px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-955 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent resize-none"
               />
             </div>
 
@@ -475,7 +475,7 @@ export const InventoryManagement: React.FC = () => {
                 type="file"
                 accept="image/*"
                 onChange={handleImageFileChange}
-                className="w-full text-xs text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-purple-50 file:text-purple-700 dark:file:bg-purple-900/20 dark:file:text-purple-300 hover:file:bg-purple-100 cursor-pointer"
+                className="w-full text-xs text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-accent-bg file:text-accent dark:file:bg-accent-bg dark:file:text-accent hover:file:bg-accent-bg cursor-pointer"
               />
               {uploadingImage && <p className="text-[10px] text-gray-400">Uploading...</p>}
               {uploadedImageUrl && (
@@ -489,7 +489,7 @@ export const InventoryManagement: React.FC = () => {
               <button
                 type="submit"
                 disabled={uploadingImage}
-                className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition shadow-md shadow-purple-500/10"
+                className="px-6 py-2.5 bg-accent hover:bg-accent-hover disabled:opacity-50 text-white rounded-xl text-xs font-bold transition shadow-md shadow-glass"
               >
                 Add to Catalog
               </button>
@@ -500,7 +500,7 @@ export const InventoryManagement: React.FC = () => {
         {/* Filters Panel */}
         <div className="flex flex-wrap items-center gap-4 bg-white dark:bg-gray-900 p-4 rounded-xl border dark:border-gray-800 text-xs shadow-sm">
           <div className="flex items-center gap-1.5 text-gray-500 font-bold uppercase tracking-wider text-[10px]">
-            <Filter size={12} className="text-purple-600" />
+            <Filter size={12} className="text-accent" />
             <span>Filters:</span>
           </div>
 
@@ -594,7 +594,7 @@ export const InventoryManagement: React.FC = () => {
                 >
                   <div className="flex-1 overflow-y-auto py-6 px-4 sm:px-6">
                     <div className="flex items-start justify-between">
-                      <h2 className="text-lg font-black text-gray-900 dark:text-gray-100 uppercase tracking-tight">
+                      <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-tight">
                         Edit Catalog Product
                       </h2>
                       <button
@@ -616,7 +616,7 @@ export const InventoryManagement: React.FC = () => {
                           required
                           value={editForm.name}
                           onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                          className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                          className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
 
@@ -630,7 +630,7 @@ export const InventoryManagement: React.FC = () => {
                           onChange={(e) =>
                             setEditForm({ ...editForm, description: e.target.value })
                           }
-                          className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600 resize-none"
+                          className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent resize-none"
                         />
                       </div>
 
@@ -645,7 +645,7 @@ export const InventoryManagement: React.FC = () => {
                             required
                             value={editForm.price}
                             onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
-                            className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                            className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
                           />
                         </div>
                         <div className="space-y-1">
@@ -657,7 +657,7 @@ export const InventoryManagement: React.FC = () => {
                             required
                             value={editForm.stock}
                             onChange={(e) => setEditForm({ ...editForm, stock: e.target.value })}
-                            className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                            className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
                           />
                         </div>
                       </div>
@@ -669,7 +669,7 @@ export const InventoryManagement: React.FC = () => {
                         <select
                           value={editForm.category}
                           onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
-                          className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                          className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
                         >
                           {categories.map((c) => (
                             <option key={c} value={c}>
@@ -687,7 +687,7 @@ export const InventoryManagement: React.FC = () => {
                           type="file"
                           accept="image/*"
                           onChange={handleImageFileChange}
-                          className="w-full text-xs text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-purple-50 file:text-purple-700 dark:file:bg-purple-900/20 dark:file:text-purple-300 hover:file:bg-purple-100 cursor-pointer"
+                          className="w-full text-xs text-gray-500 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-accent-bg file:text-accent dark:file:bg-accent-bg dark:file:text-accent hover:file:bg-accent-bg cursor-pointer"
                         />
                         {uploadingImage && (
                           <p className="text-[10px] text-gray-400">Uploading...</p>
@@ -712,7 +712,7 @@ export const InventoryManagement: React.FC = () => {
                           onChange={(e) =>
                             setEditForm({ ...editForm, is_active: e.target.checked })
                           }
-                          className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 dark:bg-gray-900 border-gray-300"
+                          className="w-4 h-4 rounded text-accent focus:ring-accent dark:bg-gray-900 border-gray-300"
                         />
                       </div>
                     </div>
@@ -729,7 +729,7 @@ export const InventoryManagement: React.FC = () => {
                     <button
                       type="submit"
                       disabled={uploadingImage || !isFormDirty()}
-                      className="px-6 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-sm transition"
+                      className="px-6 py-2 bg-accent hover:bg-accent-hover disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-sm transition"
                     >
                       Save Changes
                     </button>

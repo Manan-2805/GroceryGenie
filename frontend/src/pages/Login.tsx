@@ -48,17 +48,11 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   };
 
   return (
-    <div className="h-full flex-1 flex flex-col justify-center items-center py-20 px-4 bg-gradient-to-br from-indigo-50/20 via-purple-50/10 to-pink-50/20 dark:from-gray-950 dark:via-purple-950/10 dark:to-gray-900">
-      <div className="max-w-md w-full p-8 border border-white/20 dark:border-gray-800/40 rounded-3xl glassmorphism shadow-2xl text-center space-y-6 relative overflow-hidden backdrop-blur-xl bg-white/40 dark:bg-gray-950/40">
-        {/* Subtle decorative background glows */}
-        <div className="absolute -top-10 -left-10 w-32 h-32 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-
+    <div className="min-h-screen flex flex-col justify-center items-center py-20 px-4 bg-app">
+      <div className="glass-card max-w-md w-full p-8 text-center space-y-6">
         <div className="space-y-2">
-          <h1 className="text-4xl font-black tracking-tight bg-gradient-to-r from-purple-600 via-indigo-600 to-pink-600 bg-clip-text text-transparent">
-            GroceryGenie
-          </h1>
-          <p className="text-[10px] font-semibold tracking-wider text-purple-600 dark:text-purple-400 uppercase">
+          <h1 className="text-3xl font-semibold tracking-tight text-accent">GroceryGenie</h1>
+          <p className="text-[10px] font-semibold tracking-wider text-muted uppercase">
             Voice-First AI Shopping Assistant
           </p>
         </div>
@@ -72,10 +66,10 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
         <div>
           <button
             onClick={handleGoogleLogin}
-            className="group w-full py-3 px-5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 hover:border-purple-500 dark:hover:border-purple-400 hover:shadow-lg hover:shadow-purple-500/10 rounded-2xl text-xs font-bold text-gray-700 dark:text-gray-300 transition duration-300 flex justify-center items-center gap-3 active:scale-[0.98]"
+            className="group w-full py-3 px-5 bg-surface border border-border hover:border-accent rounded-xl text-xs font-semibold text-heading transition duration-200 flex justify-center items-center gap-3 active:scale-[0.98]"
           >
             <svg
-              className="w-4 h-4 group-hover:scale-110 transition duration-300"
+              className="w-4 h-4 group-hover:scale-105 transition duration-200"
               viewBox="0 0 24 24"
             >
               <path
@@ -100,19 +94,15 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
         </div>
 
         {import.meta.env.DEV && (
-          <div className="pt-2">
-            <button
-              onClick={handleDevBypass}
-              disabled={loading}
-              className="w-full py-3 px-5 bg-purple-600 hover:bg-purple-700 text-white rounded-2xl text-xs font-bold transition duration-300 active:scale-[0.98] focus:outline-none"
-            >
+          <div className="pt-1">
+            <button onClick={handleDevBypass} disabled={loading} className="btn-primary w-full">
               {loading ? 'Bypassing...' : 'Continue as Dev User'}
             </button>
           </div>
         )}
 
-        <div className="border-t border-gray-100 dark:border-gray-900 pt-4">
-          <p className="text-[9px] text-gray-400 leading-relaxed px-6">
+        <div className="border-t border-border/60 pt-4">
+          <p className="text-[9px] text-muted leading-relaxed px-6">
             Authorized logins are fully secured with httpOnly sessions.
           </p>
         </div>

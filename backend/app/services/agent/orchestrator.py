@@ -26,56 +26,55 @@ from app.services.memory import (
 
 logger = logging.getLogger("app.services.agent.orchestrator")
 
-# Single prompt for intent classification + parameter extraction
-INTENT_PROMPT = """You are a grocery assistant. Determine what the user wants to do and extract parameters.
+# Intent classification prompt — kept intentionally lean.
+# Parameter docs for address/product creation are omitted here because the
+# orchestrator handles slot-filling in Python; the LLM only needs to pick the
+# right tool name and extract the handful of simple scalars.
+INTENT_PROMPT = """You are a grocery-store AI assistant. Your ONLY job here is to classify the user's intent and extract parameters as JSON.
 
-Available tools and their parameters (tool_name: parameters):
+Available tools for this session:
 {tool_descriptions}
 
-User facts/preferences: {facts}
-Recent conversation: {history}
+User preferences/facts: {facts}
+Recent conversation (last 4 turns):
+{history}
 
-If the user's request is completely unrelated to grocery shopping (e.g. sports, politics, coding, general knowledge), set tool to "out_of_scope".
-If the user's request expresses a durable personal fact (dietary restriction, strong preference, allergy), include it in "fact_to_remember".
-Do NOT extract one-off purchase requests or search queries as facts.
+CLASSIFICATION RULES:
+1. Grocery-related requests ALWAYS map to a tool — never mark them out_of_scope.
+2. "out_of_scope" is ONLY for topics completely unrelated to groceries/shopping/orders/addresses
+   (e.g. sports scores, politics, writing code, general trivia).
+3. Pronouns like "them", "it", "those" refer to the most recent products/items in the conversation.
+4. "my orders", "past orders", "order history", "transactions", "purchases" → view_orders
+5. "add X to cart", "put X in cart", "buy X", "get me X" → add_to_cart
+6. "show cart", "what's in my cart" → view_cart
+7. "switch to seller", "become seller", "seller mode" → switch_role with role=seller
+8. "dark mode", "light mode", "toggle theme" → toggle_theme (special non-tool response)
 
-Return ONLY JSON:
+Return ONLY valid JSON — no markdown, no explanation:
 {{
-  "tool": "tool_name or out_of_scope",
-  "params": {{ "param1": "value1", ... }},
-  "fact_to_remember": "fact summary or null",
-  "fact_category": "dietary/preference/instruction/other or null",
-  "out_of_scope_reason": "reason string or null (only if tool is out_of_scope)"
+  "tool": "<tool_name> or out_of_scope or toggle_theme",
+  "params": {{}},
+  "fact_to_remember": null,
+  "fact_category": null
 }}
 
-For 'search_products': params can include query, category, min_price, max_price, min_rating, in_stock_only.
-  IMPORTANT: If the user mentions any filter like "less than $5", "under $10", "cheaper than", "more than $X",
-  "price range", "minimum rating", "organic only", "in stock", extract them into the appropriate params.
-  For price comparisons, convert them to min_price and max_price numeric values.
+Key param rules (only extract what's clearly present — use null otherwise):
+- search_products: query, category, min_price, max_price, min_rating, in_stock_only
+- add_to_cart / remove_from_cart / update_cart_quantity: product_id (null if unknown), quantity (null if not stated)
+- switch_role: role ("customer" or "seller")
+- manage_addresses: action ("list"/"add"/"update"/"delete"), address_data (raw address string as "text" field — extraction handled separately)
+- get_order_detail: order_id
+- seller_create_product: name, description, category, price, stock (null for any not provided)
+- seller_update_product: product_id, plus any of name/description/category/price/stock
+- seller_delete_product: product_id
+- list_fulfillment_orders: status, min_total, max_total, date_from (YYYY-MM-DD), date_to (YYYY-MM-DD)
+- update_order_status: order_id, new_status
+- inventory_search: stock_filter, min_rating, min_sold, sort_by, category
+- All other tools: no params needed
 
-For 'add_to_cart'/'remove_from_cart'/'update_cart_quantity': params need product_id, quantity.
-  IMPORTANT: If product_id is not mentioned, set product_id to null. If quantity is not mentioned, set quantity to null.
+fact_to_remember: only for durable facts (allergy, dietary restriction, strong preference). NOT for one-off purchases.
 
-For 'switch_role': params need role ("customer" or "seller").
-
-For 'manage_addresses': params need action ("list"/"add"/"update"/"delete") and address_data object.
-  For action='add' or action='update', address_data fields:
-  - label: String (e.g. "Home", "Work", "Office")
-  - line1: Street address (e.g. "B-63 Street 5, Akshar Residency")
-  - line2: Suite/Apt/Building (optional)
-  - city: City name (e.g. "Bhuj", "Mumbai")
-  - state: State name (e.g. "Gujarat", "Maharashtra")
-  - postal_code: Postal/Zip code (e.g. "370001")
-  - country: Country name (e.g. "India")
-  - is_default: Boolean (optional, default false)
-
-For 'seller_create_product': params need name, description, category, price, stock.
-For 'seller_update_product': params need product_id, and optionally name/description/category/price/stock.
-For 'seller_delete_product': params need product_id.
-For 'place_order': no params needed (uses cart + default address).
-For 'view_cart'/'view_orders'/'view_facts'/'seller_list_products': no params needed.
-
-Output ONLY raw JSON. No markdown code blocks, no prose."""
+Output ONLY raw JSON."""
 
 RESPONSE_PROMPT = """You are a friendly grocery shopping assistant. Format the tool execution results into a natural response.
 
@@ -86,6 +85,12 @@ CRITICAL RULES:
 - Keep responses concise and helpful.
 - NEVER show raw UUIDs or technical identifiers to the user.
 
+CANONICAL ACTION VALUE FORMATS — use these EXACTLY in all "actions" arrays:
+  - Add to cart:    "add_<uuid>"          e.g. "add_928a374a-9e34-470b-8aab-86654fde0a9a"
+  - View detail:    "view_<uuid>"         e.g. "view_928a374a-9e34-470b-8aab-86654fde0a9a"
+  - Order detail:   "order_detail_<uuid>" e.g. "order_detail_358ef3f6-1a46-49a2-9ab5-d3dd3c94b030"
+  Never truncate UUIDs. Never use "add_product_id_" or "view_product_id_" prefixes.
+
 User query: {query}
 Results: {results}
 
@@ -94,7 +99,7 @@ Each option can have "actions" for quick actions:
 {{
   "text": "Your response text",
   "options": [
-    {{"label": "Product Name", "value": "product_id", "description": "Price info", "actions": [{{"label": "Add to Cart", "value": "add_product_id"}}, {{"label": "View Details", "value": "view_product_id"}}]}},
+    {{"label": "Product Name", "value": "<uuid>", "description": "Price info", "actions": [{{"label": "Add to Cart", "value": "add_<uuid>"}}, {{"label": "View Details", "value": "view_<uuid>"}}]}}
   ]
 }}
 
@@ -141,6 +146,22 @@ Output ONLY raw JSON:
   ]
 }}"""
 
+# Dedicated small prompt for extracting structured address fields from any free-text input.
+# Intentionally minimal — no tool list, no grocery context — just field extraction.
+ADDRESS_EXTRACT_PROMPT = """Extract address fields from the text below.
+Return ONLY a JSON object with these keys (set to null if not found):
+  label        - nickname e.g. "Home", "Work", "Office" (null if not mentioned)
+  line1        - street/house/building e.g. "B-63 Street 5, Akshar Residency"
+  line2        - apartment/suite/floor (null if not mentioned)
+  city         - city or town name
+  state        - state or province name
+  postal_code  - postal/ZIP/pin code as a string
+  country      - country name (default "India" if not mentioned but address seems Indian)
+
+Text: "{address_text}"
+
+Output ONLY raw JSON. No markdown, no explanation."""
+
 
 def _sanitize_error_message(raw_error: str) -> str:
     """Sanitize error messages to avoid leaking technical details to users."""
@@ -156,6 +177,29 @@ def _sanitize_error_message(raw_error: str) -> str:
         return "I'm having connection issues. Please try again later."
     # Default
     return "Something went wrong. Please try again."
+
+
+def _build_role_scoped_tool_descs(user_role: UserRole) -> str:
+    """Build a tool-description string scoped to what this role can actually use.
+
+    Customer: sees only the 'all' tools (no seller-specific entries).
+    Seller: sees 'all' tools + seller tools.
+    This keeps the intent-classifier prompt ~40% shorter for customers and
+    prevents the model from suggesting seller tools to customer sessions.
+    """
+    from app.services.agent.tools import (
+        ROLE_TOOL_PERMISSIONS,
+    )
+
+    allowed: set[str] = set(ROLE_TOOL_PERMISSIONS.get("all", []))
+    role_tools = ROLE_TOOL_PERMISSIONS.get(user_role, [])
+    allowed.update(role_tools)
+
+    lines = []
+    for name, desc in TOOL_DESCRIPTIONS.items():
+        if name in allowed:
+            lines.append(f"  - {name}: {desc}")
+    return "\n".join(lines)
 
 
 class AgentOrchestrator:
@@ -214,6 +258,21 @@ class AgentOrchestrator:
             return await self._handle_address_collect_response(
                 user_message, collect_ctx
             )
+
+        # Check for pending address update (user is sending a delta or confirming)
+        addr_update_key = f"chat:session:{self.session_id}:address_update_pending"
+        addr_update_str = await redis_client.get(addr_update_key)
+        if addr_update_str:
+            update_ctx = json.loads(addr_update_str)
+            await redis_client.delete(addr_update_key)
+            response = await self._handle_address_update_response(
+                user_message, update_ctx
+            )
+            await append_message_to_session(str(self.session_id), "user", user_message)
+            await append_message_to_session(
+                str(self.session_id), "assistant", response.get("text", "")
+            )
+            return response
 
         # Check for pending quantity response from Redis or self
         quantity_key = f"chat:session:{self.session_id}:pending_quantity"
@@ -363,6 +422,18 @@ class AgentOrchestrator:
             # Fall through for other messages
             await redis_client.delete(pending_key)
 
+        # Check for pending seller_create_product slot-fill
+        seller_partial_key = f"chat:session:{self.session_id}:seller_create_partial"
+        seller_partial_str = await redis_client.get(seller_partial_key)
+        if seller_partial_str:
+            # User is responding to a slot-fill prompt — route directly to merger
+            response = await self._handle_seller_create_followup(user_message)
+            await append_message_to_session(str(self.session_id), "user", user_message)
+            await append_message_to_session(
+                str(self.session_id), "assistant", response.get("text", "")
+            )
+            return response
+
         # Check for deterministic fast path (0ms LLM bypass for button clicks and direct commands)
         fast_result = await self._check_fast_path(user_message)
         if fast_result is not None:
@@ -381,12 +452,10 @@ class AgentOrchestrator:
         facts_str = await self._get_facts(user_message)
         history = await get_session_history(str(self.session_id))
         history_str = "\n".join(
-            [f"{msg['role']}: {msg['content']}" for msg in history[-6:]]
+            [f"{msg['role']}: {msg['content']}" for msg in history[-4:]]
         )
 
-        tool_descs = "\n".join(
-            [f"  - {name}: {desc}" for name, desc in TOOL_DESCRIPTIONS.items()]
-        )
+        tool_descs = _build_role_scoped_tool_descs(self.user_role)
 
         intent_response = await call_llm(
             system_prompt="You are a precise intent classifier.",
@@ -397,7 +466,7 @@ class AgentOrchestrator:
             )
             + f"\n\nUser message: '{user_message}'",
             temperature=0.0,
-            max_tokens=1024,
+            max_tokens=512,
             call_type="intent_classifier",
         )
 
@@ -456,6 +525,19 @@ class AgentOrchestrator:
             f"[TIMING] Step 1: Intent classification - Time: {time.perf_counter() - step_start:.4f}s (tool: {selected_tool})"
         )
 
+        # Handle toggle_theme — pure client-side action, no DB needed
+        if selected_tool == "toggle_theme":
+            await append_message_to_session(str(self.session_id), "user", user_message)
+            response = {
+                "type": "toggle_theme",
+                "text": "Theme toggled.",
+                "options": None,
+            }
+            await append_message_to_session(
+                str(self.session_id), "assistant", response["text"]
+            )
+            return response
+
         # Handle out of scope dynamically
         if selected_tool == "out_of_scope":
             out_prompt = (
@@ -490,8 +572,19 @@ class AgentOrchestrator:
         if selected_tool != "out_of_scope":
             try:
                 check_tool_permission(selected_tool, self.user_role)
+            except ValueError:
+                # Unknown tool name — LLM hallucinated something not in the registry.
+                # Return a graceful error; do NOT trigger the role-switch dialog.
+                logger.warning(
+                    f"LLM returned unknown tool name '{selected_tool}' — not in TOOL_REGISTRY"
+                )
+                return {
+                    "type": "response",
+                    "text": "I'm not sure how to do that. Could you rephrase your request?",
+                    "options": None,
+                }
             except PermissionError as e:
-                # Extract which role is needed from the error message
+                # Tool exists but user's role lacks permission → offer role switch
                 err_str = str(e)
                 needed_role = "seller"
                 if "requires '" in err_str:
@@ -560,27 +653,44 @@ class AgentOrchestrator:
                     "options": None,
                 }
 
-        # Handle address collection slot filling for manage_addresses action="add"
+        # Handle address collection slot filling for manage_addresses
         if selected_tool == "manage_addresses":
             action = params.get("action", "list")
             if action == "add":
                 addr_data = params.get("address_data") or {}
-                line1 = addr_data.get("line1") or addr_data.get("street")
-                city = addr_data.get("city")
-                if not line1 or not city:
-                    return await self._start_address_collect_flow(
-                        addr_data, user_message
-                    )
-
-        # Handle seller_create_product missing name guard
-        if selected_tool == "seller_create_product":
-            name = params.get("name")
-            if not name:
+                # Always route through _start_address_collect_flow — it runs the
+                # extractor first and only asks for genuinely missing fields
+                return await self._start_address_collect_flow(addr_data, user_message)
+            if action == "update" and not params.get("address_id"):
+                # No address_id given — show list so user can pick one
+                list_result = await self._execute_tool(
+                    "manage_addresses", {"action": "list"}
+                )
+                if isinstance(list_result, dict) and list_result.get("addresses"):
+                    addr_list = list_result["addresses"]
+                    options = [
+                        {
+                            "label": a.get("label", "Home"),
+                            "value": f"update_address_{a['id']}",
+                            "description": f"{a.get('line1', '')}, {a.get('city', '')}",
+                        }
+                        for a in addr_list
+                    ]
+                    return {
+                        "type": "options_response",
+                        "text": "Which address would you like to update?",
+                        "options": options,
+                        "free_input_allowed": False,
+                    }
                 return {
                     "type": "response",
-                    "text": 'To create a product, please specify the product name, description, category, price, and initial stock. For example: "Create product Organic Honey, description Fresh raw honey, category Bakery, price 7.99, stock 50"',
+                    "text": "You have no saved addresses yet.",
                     "options": None,
                 }
+
+        # Handle seller_create_product — slot-fill all required fields before hitting DB
+        if selected_tool == "seller_create_product":
+            return await self._handle_seller_create_slot_fill(params, user_message)
 
         # Step 2: Execute tool
         step_start = time.perf_counter()
@@ -802,16 +912,263 @@ class AgentOrchestrator:
 
         return response
 
+    async def _extract_address_fields(self, text: str) -> dict[str, Any]:
+        """Call the dedicated ADDRESS_EXTRACT_PROMPT to parse any free-text address.
+        Returns a dict of extracted fields (values may be None if not found).
+        """
+        raw = await call_llm(
+            system_prompt="You are a precise address field extractor.",
+            user_prompt=ADDRESS_EXTRACT_PROMPT.format(address_text=text),
+            temperature=0.0,
+            max_tokens=200,
+            call_type="address_extract",
+        )
+        if not raw:
+            return {}
+        try:
+            extracted = json.loads(extract_json_from_response(raw))
+            # Strip None values so they don't overwrite valid collected data
+            return {
+                k: v for k, v in extracted.items() if v is not None and str(v).strip()
+            }
+        except (json.JSONDecodeError, ValueError):
+            return {}
+
+    async def _start_address_update_flow(self, address_id: str) -> dict[str, Any]:
+        """Initiate address update: fetch current data, store in Redis, ask what to change."""
+        from uuid import UUID
+
+        from sqlalchemy import select
+
+        from app.db.models.address import Address
+
+        try:
+            addr_uuid = UUID(address_id)
+            a_res = await self.db.execute(
+                select(Address).where(
+                    Address.id == addr_uuid,
+                    Address.user_id == self.user_id,
+                )
+            )
+            address = a_res.scalar_one_or_none()
+            if not address:
+                return {
+                    "type": "response",
+                    "text": "Address not found.",
+                    "options": None,
+                }
+
+            current = {
+                "label": address.label,
+                "line1": address.line1,
+                "line2": address.line2 or "",
+                "city": address.city,
+                "state": address.state,
+                "postal_code": address.postal_code,
+                "country": address.country,
+            }
+
+            redis_client = get_redis_client()
+            ctx = {"address_id": address_id, "current": current}
+            await redis_client.set(
+                f"chat:session:{self.session_id}:address_update_pending",
+                json.dumps(ctx),
+                ex=300,
+            )
+
+            lines = [f"**{address.label}** — current details:"]
+            lines.append(f"  Street: {address.line1}")
+            if address.line2:
+                lines.append(f"  Line 2: {address.line2}")
+            lines.append(f"  City: {address.city}")
+            lines.append(f"  State: {address.state}")
+            lines.append(f"  Postal code: {address.postal_code}")
+            lines.append(f"  Country: {address.country}")
+            lines.append(
+                "\nWhat would you like to change? "
+                "e.g. 'street to 45 Main St' or 'city to Surat, pin 395001'"
+            )
+            return {"type": "response", "text": "\n".join(lines), "options": None}
+
+        except Exception as e:
+            logger.warning(f"_start_address_update_flow failed: {e}")
+            return {
+                "type": "response",
+                "text": "I couldn't find that address.",
+                "options": None,
+            }
+
+    async def _handle_address_update_response(
+        self, user_message: str, ctx: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle user's delta message for address update.
+
+        Flow:
+          1. Run ADDRESS_EXTRACT_PROMPT on the user message to find changed fields.
+          2. Merge into current address data.
+          3. Show a confirmation card with the proposed changes.
+          4. On confirm → write to DB. On deny → cancel.
+        """
+        redis_client = get_redis_client()
+        confirm_key = f"chat:session:{self.session_id}:address_update_confirm"
+
+        # Check if this is a confirm/deny response to the confirmation card
+        confirm_ctx_str = await redis_client.get(confirm_key)
+        if confirm_ctx_str:
+            confirm_ctx = json.loads(confirm_ctx_str)
+            msg_lower = user_message.strip().lower()
+            is_confirm = (
+                msg_lower
+                in (
+                    "yes",
+                    "confirm",
+                    "sure",
+                    "ok",
+                    "do it",
+                    "proceed",
+                    "yeah",
+                    "yep",
+                    "confirm_address_update",
+                )
+                or user_message.strip() == "confirm_address_update"
+            )
+            is_deny = msg_lower in (
+                "no",
+                "cancel",
+                "stop",
+                "never mind",
+                "nah",
+                "dont",
+                "don't",
+            )
+
+            if is_confirm:
+                await redis_client.delete(confirm_key)
+                result = await self._execute_tool(
+                    "manage_addresses",
+                    {
+                        "action": "update",
+                        "address_id": confirm_ctx["address_id"],
+                        "address_data": confirm_ctx["updated"],
+                    },
+                )
+                return await self._format_response("update address", result)
+
+            if is_deny:
+                await redis_client.delete(confirm_key)
+                return {
+                    "type": "response",
+                    "text": "Address update cancelled.",
+                    "options": None,
+                }
+
+            # Not a yes/no — treat as a new delta and re-extract
+            await redis_client.delete(confirm_key)
+            # Fall through to extraction below with current as base
+            ctx = {
+                "address_id": confirm_ctx["address_id"],
+                "current": confirm_ctx["updated"],
+            }
+
+        # Extract changed fields from user message
+        delta = await self._extract_address_fields(user_message)
+
+        if not delta:
+            # Nothing extracted — ask again
+            return {
+                "type": "response",
+                "text": (
+                    "I couldn't extract any address fields from that. "
+                    "Please try again, e.g. 'change street to 45 Main St' or 'update pin to 395001'."
+                ),
+                "options": None,
+            }
+
+        # Merge delta onto current
+        current = ctx.get("current", {})
+        updated = {**current, **delta}
+
+        # Build a human-readable diff of what changed
+        changes = []
+        field_labels = {
+            "label": "Label",
+            "line1": "Street",
+            "line2": "Line 2",
+            "city": "City",
+            "state": "State",
+            "postal_code": "Postal code",
+            "country": "Country",
+        }
+        for field, new_val in delta.items():
+            old_val = current.get(field, "")
+            if str(old_val) != str(new_val):
+                changes.append(
+                    f"  **{field_labels.get(field, field)}**: {old_val or '(empty)'} → {new_val}"
+                )
+
+        if not changes:
+            return {
+                "type": "response",
+                "text": "The values you provided match what's already saved. No changes needed.",
+                "options": None,
+            }
+
+        # Store confirmation context in Redis
+        confirm_ctx_data = {
+            "address_id": ctx["address_id"],
+            "current": current,
+            "updated": updated,
+        }
+        await redis_client.set(confirm_key, json.dumps(confirm_ctx_data), ex=300)
+
+        changes_text = "\n".join(changes)
+        return {
+            "type": "options_response",
+            "text": f"I'll make these changes:\n{changes_text}\n\nConfirm?",
+            "options": [
+                {
+                    "label": "✅ Yes, update",
+                    "value": "confirm_address_update",
+                    "description": "Save the changes",
+                },
+                {
+                    "label": "❌ Cancel",
+                    "value": "cancel",
+                    "description": "Keep existing address",
+                },
+            ],
+            "free_input_allowed": True,
+        }
+
     async def _start_address_collect_flow(
         self, initial_data: dict[str, Any], user_message: str
     ) -> dict[str, Any]:
-        """Start the multi-turn slot filling flow for adding an address."""
+        """Start multi-turn slot filling for adding a new address.
+
+        Uses ADDRESS_EXTRACT_PROMPT first to parse whatever the user already
+        provided, then only asks for genuinely missing required fields.
+        """
         from app.services.agent.tools.address_tools import _normalize_address_data
 
+        # First pass: normalize any aliased keys already in initial_data
         norm = _normalize_address_data(initial_data)
+
+        # Second pass: if user_message looks like a full address string, run extractor on it
+        # (happens when LLM passes the raw address text in address_data without parsing it)
+        full_text_fields = ("address", "full_address", "raw", "text")
+        raw_text = next(
+            (initial_data.get(k) for k in full_text_fields if initial_data.get(k)), None
+        )
+        if raw_text or (len(user_message) > 20 and not norm.get("line1")):
+            extract_text = raw_text or user_message
+            extracted = await self._extract_address_fields(extract_text)
+            # Merge: extractor wins over raw norm for any key it found
+            norm = {**norm, **extracted}
+
+        # Build collected from whatever is now resolved
         collected: dict[str, Any] = {}
         for k in ("label", "line1", "line2", "city", "state", "postal_code", "country"):
-            if k in norm and norm[k]:
+            if norm.get(k):
                 collected[k] = norm[k]
 
         required = ["label", "line1", "city", "state", "postal_code"]
@@ -993,9 +1350,19 @@ class AgentOrchestrator:
                 )
                 return await self._format_response(user_message, result)
 
-        # 3. Handle view_<product_id>
-        if msg.startswith("view_"):
-            pid = msg.replace("view_", "").strip()
+        # 3. Handle view_<product_id>  ── canonical prefix
+        #    Also handle legacy view_product_id_<uuid> the LLM used to emit
+        if msg.startswith("view_product_id_") or (
+            msg.startswith("view_")
+            and not msg.startswith("view_cart")
+            and not msg.startswith("view_orders")
+            and not msg.startswith("view_facts")
+        ):
+            # Strip either prefix to get the raw UUID
+            if msg.startswith("view_product_id_"):
+                pid = msg.replace("view_product_id_", "").strip()
+            else:
+                pid = msg.replace("view_", "").strip()
             if pid:
                 try:
                     from uuid import UUID
@@ -1017,7 +1384,7 @@ class AgentOrchestrator:
                                 {
                                     "label": product.name,
                                     "value": str(product.id),
-                                    "description": f"${float(product.price):.2f} • Stock: {product.stock} • Rating: {float(product.avg_rating):.1f}⭐",
+                                    "description": f"${float(product.price):.2f} • Stock: {product.stock} • ⭐ {float(product.avg_rating):.1f}",
                                     "actions": [
                                         {
                                             "label": "Add to Cart",
@@ -1029,7 +1396,7 @@ class AgentOrchestrator:
                             "free_input_allowed": True,
                         }
                 except Exception:
-                    pass  # nosec: B110 - UUID lookup failure is non-critical
+                    pass  # nosec: B110 — UUID lookup failure is non-critical
 
         # 4. Handle delete_address_<uuid>
         if msg.startswith("delete_address_"):
@@ -1060,6 +1427,33 @@ class AgentOrchestrator:
             if pid:
                 result = await self._execute_tool(
                     "seller_delete_product", {"product_id": pid}
+                )
+                return await self._format_response(user_message, result)
+
+        # 6b. Handle update_address_<uuid>  ── start address-update flow
+        if msg.startswith("update_address_"):
+            aid = msg.replace("update_address_", "").strip()
+            if aid:
+                return await self._start_address_update_flow(aid)
+
+        # 6c. Handle order_detail_<uuid>  ── view a specific order
+        if msg.startswith("order_detail_"):
+            oid = msg.replace("order_detail_", "").strip()
+            if oid:
+                result = await self._execute_tool("get_order_detail", {"order_id": oid})
+                return await self._format_response(user_message, result)
+
+        # 6d. Handle fulfillment_status_<order_id>_<new_status>
+        if msg.startswith("fulfillment_status_"):
+            # Format: fulfillment_status_<uuid>_<status>
+            # UUID is 36 chars; after prefix, split at position 36+1
+            remainder = msg.replace("fulfillment_status_", "").strip()
+            if len(remainder) > 37 and remainder[36] == "_":
+                order_id = remainder[:36]
+                new_status = remainder[37:]
+                result = await self._execute_tool(
+                    "update_order_status",
+                    {"order_id": order_id, "new_status": new_status},
                 )
                 return await self._format_response(user_message, result)
 
@@ -1132,12 +1526,154 @@ class AgentOrchestrator:
             result = await self._execute_tool("seller_list_products", {})
             return await self._format_response(user_message, result)
 
-        # 13. Handle direct checkout / place order
+        # 13. Handle fulfillment queue shortcut
+        if msg_lower in (
+            "fulfillment queue",
+            "my fulfillment queue",
+            "orders to fulfill",
+            "pending orders",
+            "show fulfillment",
+        ):
+            result = await self._execute_tool("list_fulfillment_orders", {})
+            return await self._format_response(user_message, result)
+
+        # 14. Handle inventory shortcut
+        if msg_lower in (
+            "inventory",
+            "my inventory",
+            "show inventory",
+            "stock levels",
+            "view inventory",
+        ):
+            result = await self._execute_tool("inventory_search", {})
+            return await self._format_response(user_message, result)
+
+        # 15. Handle direct checkout / place order
         if msg_lower in ("place_order", "checkout", "place order", "buy now"):
             result = await self._execute_tool("place_order", {})
             return await self._format_response(user_message, result)
 
+        # 16. Handle theme toggle keywords — pure client-side, zero LLM or DB
+        _theme_triggers = (
+            "dark mode",
+            "light mode",
+            "toggle theme",
+            "switch theme",
+            "night mode",
+            "enable dark mode",
+            "enable light mode",
+            "turn on dark mode",
+            "turn on light mode",
+        )
+        if msg_lower in _theme_triggers or any(
+            kw in msg_lower for kw in _theme_triggers
+        ):
+            return {"type": "toggle_theme", "text": "Theme toggled.", "options": None}
+
         return None
+
+    async def _handle_seller_create_slot_fill(
+        self,
+        params: dict[str, Any],
+        user_message: str,
+    ) -> dict[str, Any]:
+        """Slot-fill required fields for seller_create_product.
+
+        Checks what the LLM already extracted, identifies missing required fields,
+        and either executes immediately (all present) or asks for all missing fields
+        in a single message and stores partial data in Redis.
+        """
+        redis_client = get_redis_client()
+        partial_key = f"chat:session:{self.session_id}:seller_create_partial"
+
+        # Merge with any previously stored partial data
+        stored_str = await redis_client.get(partial_key)
+        partial: dict[str, Any] = json.loads(stored_str) if stored_str else {}
+
+        # Layer in whatever the LLM extracted this turn (non-null values win)
+        for field in ("name", "description", "category", "price", "stock"):
+            val = params.get(field)
+            if val is not None and str(val).strip():
+                partial[field] = val
+
+        # Validate which required fields are still missing / invalid
+        missing: list[str] = []
+        if not partial.get("name", "").strip():
+            missing.append("name")
+        if partial.get("price") is None or float(partial.get("price", -1)) <= 0:
+            missing.append("price (e.g. 2.50)")
+        if partial.get("stock") is None or int(partial.get("stock", -1)) < 0:
+            missing.append("stock quantity (e.g. 100)")
+
+        if missing:
+            # Persist partial data so next turn can merge
+            await redis_client.set(partial_key, json.dumps(partial), ex=300)
+
+            already_have = []
+            if partial.get("name"):
+                already_have.append(f"name: {partial['name']}")
+            if partial.get("category"):
+                already_have.append(f"category: {partial['category']}")
+            if partial.get("price") and float(partial.get("price", 0)) > 0:
+                already_have.append(f"price: ${float(partial['price']):.2f}")
+            if partial.get("stock") is not None and int(partial.get("stock", -1)) >= 0:
+                already_have.append(f"stock: {partial['stock']}")
+
+            have_str = f" (I have: {', '.join(already_have)})" if already_have else ""
+            missing_str = ", ".join(missing)
+            return {
+                "type": "response",
+                "text": (
+                    f"I still need the following to create this product{have_str}: "
+                    f"**{missing_str}**.\n\n"
+                    f"Please provide them together, e.g. "
+                    f'"price 2.50, stock 100, category Fruits"'
+                ),
+                "options": None,
+            }
+
+        # All required fields present — clear partial cache and create product
+        await redis_client.delete(partial_key)
+        result = await self._execute_tool("seller_create_product", partial)
+        return await self._format_response(user_message, result)
+
+    async def _handle_seller_create_followup(self, user_message: str) -> dict[str, Any]:
+        """Handle a follow-up message that supplies missing seller_create_product fields."""
+        # Re-run intent classification but only to extract product fields from the message.
+        # We call the tool directly with the merged params via slot-fill logic.
+        redis_client = get_redis_client()
+        partial_key = f"chat:session:{self.session_id}:seller_create_partial"
+        stored_str = await redis_client.get(partial_key)
+        if not stored_str:
+            # Context expired — start fresh
+            return {
+                "type": "response",
+                "text": "I lost track of the product we were creating. Please start again with all details.",
+                "options": None,
+            }
+
+        # Use a lightweight extraction call to parse the user's follow-up
+        extract_prompt = (
+            f"Extract product fields from this message. "
+            f"Return ONLY JSON with any of: name, description, category, price (number), stock (integer).\n"
+            f"Message: '{user_message}'\n"
+            f'Output ONLY raw JSON: {{"name": ..., "category": ..., "price": ..., "stock": ...}}'
+        )
+        extracted_str = await call_llm(
+            system_prompt="You extract product creation fields from user messages.",
+            user_prompt=extract_prompt,
+            temperature=0.0,
+            max_tokens=128,
+            call_type="product_field_extract",
+        )
+        extracted_params: dict[str, Any] = {}
+        if extracted_str:
+            with contextlib.suppress(json.JSONDecodeError, ValueError):
+                extracted_params = json.loads(extract_json_from_response(extracted_str))
+
+        return await self._handle_seller_create_slot_fill(
+            extracted_params, user_message
+        )
 
     async def _execute_tool(self, tool_name: str, params: dict[str, Any]) -> Any:
         """Execute a tool by name with params. All pure Python, no LLM calls."""
@@ -1215,7 +1751,70 @@ class AgentOrchestrator:
                 "free_input_allowed": True,
             }
 
-        # ── 2. Orders result ────────────────────────────────────────────
+        # ── 2. Fulfillment queue result ─────────────────────────────────
+        # Must be checked BEFORE orders-list (both are lists with status+total keys)
+        if (
+            isinstance(results, list)
+            and results
+            and isinstance(results[0], dict)
+            and results[0].get("fulfillment_queue")
+        ):
+            count = len(results)
+            status_counts: dict[str, int] = {}
+            for row in results:
+                s = row.get("status", "unknown")
+                status_counts[s] = status_counts.get(s, 0) + 1
+            summary_parts = [
+                f"{v} {k.replace('_', ' ')}" for k, v in status_counts.items()
+            ]
+            lines = [
+                f"**📋 Fulfillment Queue** — {count} order{'s' if count != 1 else ''}"
+                + (f" ({', '.join(summary_parts)})" if summary_parts else "")
+                + "\n"
+            ]
+            fq_options: list[dict[str, Any]] = []
+            for row in results:
+                oid_short = row.get("order_id_short", "")
+                status_label = row.get("status_label", row.get("status", "").upper())
+                total = row.get("total", 0.0)
+                created = (row.get("created_at") or "")[:10]
+                item_count = row.get("my_items_count", 0)
+                my_items = row.get("my_items", [])
+                item_names = ", ".join(
+                    f"{it.get('product_name', '?')} ×{it.get('quantity', 1)}"
+                    for it in my_items[:2]
+                )
+                if len(my_items) > 2:
+                    item_names += f" +{len(my_items) - 2} more"
+                lines.append(
+                    f"• #{oid_short}… · {status_label} · ${total:.2f} · {created} · {item_count} item{'s' if item_count != 1 else ''}"
+                )
+                actions = []
+                if row.get("advance_value") and row.get("next_action_label"):
+                    actions.append(
+                        {
+                            "label": row["next_action_label"],
+                            "value": row["advance_value"],
+                        }
+                    )
+                fq_options.append(
+                    {
+                        "label": f"#{oid_short}… — {status_label}",
+                        "value": row.get("order_id", ""),
+                        "description": item_names or f"${total:.2f}",
+                        "actions": actions,
+                        "card_variant": "fulfillment_queue",
+                    }
+                )
+            return {
+                "type": "options_response",
+                "text": "\n".join(lines),
+                "options": fq_options,
+                "free_input_allowed": True,
+                "card_variant": "fulfillment_queue",
+            }
+
+        # ── 3. Orders result (customer) ─────────────────────────────────
         if (
             isinstance(results, list)
             and results
@@ -1245,12 +1844,97 @@ class AgentOrchestrator:
                         "label": f"#{oid}… — {status}",
                         "value": order.get("id", ""),
                         "description": item_names or "No items",
+                        "actions": [
+                            {
+                                "label": "View Details",
+                                "value": f"order_detail_{order.get('id', '')}",
+                            }
+                        ],
                     }
                 )
             return {
                 "type": "options_response",
                 "text": "\n".join(lines),
                 "options": options,
+                "free_input_allowed": True,
+            }
+
+        # ── 2b. Single order detail result ──────────────────────────────
+        if isinstance(results, dict) and results.get("order_detail"):
+            oid_short = results.get("id", "")[:8]
+            status = results.get("status", "").upper()
+            total = results.get("total", 0.0)
+            items_list = results.get("items", [])
+            addr = results.get("delivery_address", {})
+
+            # Status timeline
+            status_steps = ["placed", "packed", "out_for_delivery", "delivered"]
+            status_labels = {
+                "placed": "Placed",
+                "packed": "Packed",
+                "out_for_delivery": "Out for Delivery",
+                "delivered": "Delivered",
+            }
+            status_ts_keys = {
+                "placed": "created_at",
+                "packed": "packed_at",
+                "out_for_delivery": "out_for_delivery_at",
+                "delivered": "delivered_at",
+            }
+            current_status = results.get("status", "placed")
+            timeline_parts = []
+            for step in status_steps:
+                ts_key = status_ts_keys[step]
+                ts = (results.get(ts_key) or "")[:10]
+                if step == current_status:
+                    marker = "● "
+                elif status_steps.index(step) < status_steps.index(current_status):
+                    marker = "✓ "
+                else:
+                    marker = "○ "
+                label = status_labels[step]
+                timeline_parts.append(f"{marker}{label}" + (f" ({ts})" if ts else ""))
+
+            # Items table
+            item_lines = []
+            for it in items_list:
+                name = it.get("product_name", "?")
+                qty = it.get("quantity", 1)
+                price = it.get("price_at_purchase", 0.0)
+                sub = it.get("subtotal", price * qty)
+                item_lines.append(f"  • {name} × {qty}  @${price:.2f}  = ${sub:.2f}")
+
+            # Delivery address
+            addr_line = ", ".join(
+                filter(
+                    None,
+                    [
+                        addr.get("line1", ""),
+                        addr.get("line2", ""),
+                        addr.get("city", ""),
+                        addr.get("state", ""),
+                        addr.get("postal_code", ""),
+                    ],
+                )
+            )
+
+            text_parts = [
+                f"**Order #{oid_short}…** — {status} — **${total:.2f}**\n",
+                "**Status:** " + " → ".join(timeline_parts),
+                "",
+                "**Items:**",
+            ] + item_lines
+
+            if addr_line:
+                text_parts += [
+                    "",
+                    f"**Delivery to:** {addr.get('label', '')}: {addr_line}",
+                ]
+
+            return {
+                "type": "options_response",
+                "text": "\n".join(text_parts),
+                "options": None,
                 "free_input_allowed": True,
             }
 
@@ -1288,6 +1972,7 @@ class AgentOrchestrator:
                                 "label": "Set Default",
                                 "value": f"set_default_address_{aid}",
                             },
+                            {"label": "Edit", "value": f"update_address_{aid}"},
                             {"label": "Delete", "value": f"delete_address_{aid}"},
                         ],
                     }
@@ -1372,6 +2057,118 @@ class AgentOrchestrator:
                 "free_input_allowed": True,
             }
 
+        # ── 6. Inventory result ──────────────────────────────────────────
+        # Detected by: list of dicts with 'stock_status' key (set by inventory_search tool)
+        if (
+            isinstance(results, list)
+            and results
+            and isinstance(results[0], dict)
+            and "stock_status" in results[0]
+        ):
+            # Header stats — the tool returns a summary dict as the first element
+            summary = results[0] if results[0].get("_summary") else None
+            products = [r for r in results if not r.get("_summary")]
+            count = len(products)
+            header_parts = [
+                f"**📦 Inventory** — {count} product{'s' if count != 1 else ''}"
+            ]
+            if summary:
+                header_parts.append(
+                    f"(🟢 {summary.get('in_stock_count', 0)} in stock · "
+                    f"🟡 {summary.get('low_stock_count', 0)} low · "
+                    f"🔴 {summary.get('out_of_stock_count', 0)} out of stock)"
+                )
+            lines = [" ".join(header_parts) + "\n"]
+            inv_options: list[dict[str, Any]] = []
+            stock_badge = {"in_stock": "🟢", "low_stock": "🟡", "out_of_stock": "🔴"}
+            for p in products:
+                pid = p.get("id", "")
+                name = p.get("name", "")
+                price = p.get("price", 0.0)
+                stock = p.get("stock", 0)
+                rating = p.get("avg_rating", 0.0)
+                sold = p.get("sold_count", 0)
+                ss = p.get("stock_status", "in_stock")
+                badge = stock_badge.get(ss, "")
+                lines.append(
+                    f"• {badge} {name} — ${price:.2f} · Stock: {stock} · ⭐{rating:.1f} · Sold: {sold}"
+                )
+                inv_options.append(
+                    {
+                        "label": f"{badge} {name}",
+                        "value": pid,
+                        "description": f"${price:.2f} · Stock {stock} · ⭐{rating:.1f} · {sold} sold",
+                        "actions": [
+                            {"label": "Edit", "value": f"seller_edit_{pid}"},
+                            {
+                                "label": "Deactivate",
+                                "value": f"seller_deactivate_{pid}",
+                            },
+                        ],
+                        "card_variant": "inventory",
+                    }
+                )
+            return {
+                "type": "options_response",
+                "text": "\n".join(lines),
+                "options": inv_options,
+                "free_input_allowed": True,
+                "card_variant": "inventory",
+            }
+
+        # ── 7. Search products result ────────────────────────────────────
+        # Detected by: plain list of dicts each containing 'avg_rating' and 'category'
+        # (seller catalog has 'is_active'+'sold_count' and is caught above first)
+        _is_search_result = isinstance(results, list) and (
+            len(results) == 0
+            or (
+                isinstance(results[0], dict)
+                and "avg_rating" in results[0]
+                and "category" in results[0]
+                and "is_active" not in results[0]
+            )
+        )
+        if _is_search_result:
+            # Empty search result
+            if not results:
+                return {
+                    "type": "response",
+                    "text": "No products found matching your search. Try different keywords or broaden your filters.",
+                    "options": None,
+                }
+            count = len(results)
+            result_summary = f"Found {count} product{'s' if count != 1 else ''}:"
+            search_options: list[dict[str, Any]] = []
+            for p in results:
+                pid = p.get("id", "")
+                name = p.get("name", "")
+                price = p.get("price", 0.0)
+                stock = p.get("stock", 0)
+                rating = p.get("avg_rating", 0.0)
+                category = p.get("category", "")
+                in_stock = stock > 0
+                stock_label = f"Stock: {stock}" if in_stock else "Out of stock"
+                desc = f"${price:.2f} · {category} · ⭐ {rating:.1f} · {stock_label}"
+                actions = []
+                if in_stock and pid:
+                    actions.append({"label": "Add to Cart", "value": f"add_{pid}"})
+                if pid:
+                    actions.append({"label": "View Details", "value": f"view_{pid}"})
+                search_options.append(
+                    {
+                        "label": name,
+                        "value": pid,
+                        "description": desc,
+                        "actions": actions,
+                    }
+                )
+            return {
+                "type": "options_response",
+                "text": result_summary,
+                "options": search_options,
+                "free_input_allowed": True,
+            }
+
         results_str = json.dumps(results, indent=2)[:2000]  # Truncate for LLM context
 
         # LLM fallback for any genuinely unstructured result (rare)
@@ -1399,8 +2196,19 @@ class AgentOrchestrator:
                 "free_input_allowed": True,
             }
         except (json.JSONDecodeError, KeyError):
-            clean_text = response_text[:1000]
-            return {"type": "response", "text": clean_text, "options": None}
+            # If the LLM returned raw JSON text instead of a structured response,
+            # try to strip it; otherwise fall back to a safe generic message.
+            stripped = response_text.strip()
+            if stripped.startswith("{") or stripped.startswith("["):
+                logger.warning(
+                    "LLM fallback formatter returned raw JSON — using generic message"
+                )
+                return {
+                    "type": "response",
+                    "text": "Here are the results. (Use the buttons above to interact.)",
+                    "options": None,
+                }
+            return {"type": "response", "text": stripped[:1000], "options": None}
 
     async def _format_response_stream(
         self, query: str, results: Any
@@ -1466,6 +2274,22 @@ class AgentOrchestrator:
                 user_message, collect_ctx
             )
             yield result
+            return
+
+        # Check for pending address update
+        addr_update_key = f"chat:session:{self.session_id}:address_update_pending"
+        addr_update_str = await redis_client.get(addr_update_key)
+        if addr_update_str:
+            update_ctx = json.loads(addr_update_str)
+            await redis_client.delete(addr_update_key)
+            response = await self._handle_address_update_response(
+                user_message, update_ctx
+            )
+            await append_message_to_session(str(self.session_id), "user", user_message)
+            await append_message_to_session(
+                str(self.session_id), "assistant", response.get("text", "")
+            )
+            yield response
             return
 
         quantity_key = f"chat:session:{self.session_id}:pending_quantity"
@@ -1608,6 +2432,18 @@ class AgentOrchestrator:
                 return
             await redis_client.delete(pending_key)
 
+        # Check for pending seller_create_product slot-fill
+        seller_partial_key = f"chat:session:{self.session_id}:seller_create_partial"
+        seller_partial_str = await redis_client.get(seller_partial_key)
+        if seller_partial_str:
+            response = await self._handle_seller_create_followup(user_message)
+            await append_message_to_session(str(self.session_id), "user", user_message)
+            await append_message_to_session(
+                str(self.session_id), "assistant", response.get("text", "")
+            )
+            yield response
+            return
+
         # Check fast path
         fast_result = await self._check_fast_path(user_message)
         if fast_result is not None:
@@ -1623,11 +2459,9 @@ class AgentOrchestrator:
         facts_str = await self._get_facts(user_message)
         history = await get_session_history(str(self.session_id))
         history_str = "\n".join(
-            [f"{msg['role']}: {msg['content']}" for msg in history[-6:]]
+            [f"{msg['role']}: {msg['content']}" for msg in history[-4:]]
         )
-        tool_descs = "\n".join(
-            [f"  - {name}: {desc}" for name, desc in TOOL_DESCRIPTIONS.items()]
-        )
+        tool_descs = _build_role_scoped_tool_descs(self.user_role)
 
         intent_response = await call_llm(
             system_prompt="You are a precise intent classifier.",
@@ -1636,7 +2470,7 @@ class AgentOrchestrator:
             )
             + f"\n\nUser message: '{user_message}'",
             temperature=0.0,
-            max_tokens=1024,
+            max_tokens=512,
             call_type="intent_classifier",
         )
 
@@ -1667,6 +2501,11 @@ class AgentOrchestrator:
         logger.info(
             f"[VOICE STREAM] Intent: {selected_tool} ({time.perf_counter() - step_start:.2f}s)"
         )
+
+        # Handle toggle_theme
+        if selected_tool == "toggle_theme":
+            yield {"type": "toggle_theme", "text": "Theme toggled.", "options": None}
+            return
 
         # Handle out of scope
         if selected_tool == "out_of_scope":
@@ -1699,6 +2538,17 @@ class AgentOrchestrator:
         if selected_tool != "out_of_scope":
             try:
                 check_tool_permission(selected_tool, self.user_role)
+            except ValueError:
+                # Unknown tool name — LLM hallucinated something not in the registry.
+                logger.warning(
+                    f"[VOICE STREAM] LLM returned unknown tool name '{selected_tool}' — not in TOOL_REGISTRY"
+                )
+                yield {
+                    "type": "response",
+                    "text": "I'm not sure how to do that. Could you rephrase your request?",
+                    "options": None,
+                }
+                return
             except PermissionError as e:
                 err_str = str(e)
                 needed_role = "seller"
@@ -1767,25 +2617,42 @@ class AgentOrchestrator:
             action = params.get("action", "list")
             if action == "add":
                 addr_data = params.get("address_data") or {}
-                line1 = addr_data.get("line1") or addr_data.get("street")
-                city = addr_data.get("city")
-                if not line1 or not city:
-                    result = await self._start_address_collect_flow(
-                        addr_data, user_message
-                    )
-                    yield result
+                result = await self._start_address_collect_flow(addr_data, user_message)
+                yield result
+                return
+            if action == "update" and not params.get("address_id"):
+                list_result = await self._execute_tool(
+                    "manage_addresses", {"action": "list"}
+                )
+                if isinstance(list_result, dict) and list_result.get("addresses"):
+                    addr_list = list_result["addresses"]
+                    options = [
+                        {
+                            "label": a.get("label", "Home"),
+                            "value": f"update_address_{a['id']}",
+                            "description": f"{a.get('line1', '')}, {a.get('city', '')}",
+                        }
+                        for a in addr_list
+                    ]
+                    yield {
+                        "type": "options_response",
+                        "text": "Which address would you like to update?",
+                        "options": options,
+                        "free_input_allowed": False,
+                    }
                     return
-
-        # Handle seller_create_product missing name
-        if selected_tool == "seller_create_product":
-            name = params.get("name")
-            if not name:
                 yield {
                     "type": "response",
-                    "text": "Please specify the product name, description, category, price, and stock.",
+                    "text": "You have no saved addresses yet.",
                     "options": None,
                 }
                 return
+
+        # Handle seller_create_product — slot-fill all required fields before hitting DB
+        if selected_tool == "seller_create_product":
+            result = await self._handle_seller_create_slot_fill(params, user_message)
+            yield result
+            return
 
         # Step 2: Execute tool (blocking)
         step_start = time.perf_counter()

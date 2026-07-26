@@ -141,21 +141,21 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
   return (
     <div className="max-w-2xl mx-auto py-8 px-4 space-y-8 text-left">
       <div>
-        <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">Settings</h1>
+        <h1 className="text-3xl font-semibold text-gray-800 dark:text-gray-200">Settings</h1>
         <p className="text-sm text-gray-500">
           Manage your theme, role, addresses, and agent memories
         </p>
       </div>
 
       {/* Theme Control */}
-      <div className="p-6 border rounded-xl glassmorphism space-y-4">
+      <div className="p-6 glass-card space-y-4">
         <h3 className="font-bold text-lg text-gray-800 dark:text-gray-200">Visual Theme</h3>
         <div className="flex gap-4">
           <button
             onClick={() => setTheme('light')}
             className={`px-4 py-2 rounded-lg font-semibold border transition ${
               theme === 'light'
-                ? 'bg-purple-600 border-purple-600 text-white'
+                ? 'bg-accent border-accent text-white'
                 : 'border-gray-300 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-900 text-gray-700 dark:text-gray-300'
             }`}
           >
@@ -165,7 +165,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
             onClick={() => setTheme('dark')}
             className={`px-4 py-2 rounded-lg font-semibold border transition ${
               theme === 'dark'
-                ? 'bg-purple-600 border-purple-600 text-white'
+                ? 'bg-accent border-accent text-white'
                 : 'border-gray-300 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-900 text-gray-700 dark:text-gray-300'
             }`}
           >
@@ -175,7 +175,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
       </div>
 
       {/* Role Switching */}
-      <div className="p-6 border rounded-xl glassmorphism space-y-4">
+      <div className="p-6 glass-card space-y-4">
         <h3 className="font-bold text-lg text-gray-800 dark:text-gray-200">Role Selection</h3>
         <p className="text-xs text-gray-500">
           Switching your role will customize your view between buying and managing inventory.
@@ -185,7 +185,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
             onClick={() => onRoleChange('customer')}
             className={`px-4 py-2 rounded-lg font-semibold border transition ${
               userRole === 'customer'
-                ? 'bg-purple-600 border-purple-600 text-white'
+                ? 'bg-accent border-accent text-white'
                 : 'border-gray-300 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-900 text-gray-700 dark:text-gray-300'
             }`}
           >
@@ -195,7 +195,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
             onClick={() => onRoleChange('seller')}
             className={`px-4 py-2 rounded-lg font-semibold border transition ${
               userRole === 'seller'
-                ? 'bg-purple-600 border-purple-600 text-white'
+                ? 'bg-accent border-accent text-white'
                 : 'border-gray-300 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-900 text-gray-700 dark:text-gray-300'
             }`}
           >
@@ -206,10 +206,10 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
 
       {/* Address Management (Customer Only) */}
       {userRole === 'customer' && (
-        <div className="p-6 border rounded-xl glassmorphism space-y-6">
+        <div className="p-6 glass-card space-y-6">
           <div className="flex justify-between items-center border-b pb-3 dark:border-gray-900">
             <h3 className="font-bold text-lg text-gray-800 dark:text-gray-200 flex items-center gap-2">
-              <MapPin size={20} className="text-purple-600" />
+              <MapPin size={20} className="text-accent" />
               <span>Saved Addresses</span>
             </h3>
             <button
@@ -226,7 +226,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
                 });
                 setShowAddressForm(!showAddressForm);
               }}
-              className="flex items-center gap-1 px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition shadow-sm"
+              className="flex items-center gap-1 px-3 py-1 bg-accent hover:bg-accent-hover text-white rounded-lg text-xs font-bold transition shadow-sm"
             >
               <Plus size={14} />
               <span>Add New</span>
@@ -249,7 +249,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
                   value={addressForm.label}
                   onChange={(e) => setAddressForm((f) => ({ ...f, label: e.target.value }))}
                   placeholder="Home"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-900 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-900 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
 
@@ -261,7 +261,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
                   value={addressForm.line1}
                   onChange={(e) => setAddressForm((f) => ({ ...f, line1: e.target.value }))}
                   placeholder="123 Main St"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-900 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-900 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
 
@@ -274,7 +274,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
                   value={addressForm.line2}
                   onChange={(e) => setAddressForm((f) => ({ ...f, line2: e.target.value }))}
                   placeholder="Apt 4B"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-900 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-900 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
 
@@ -286,7 +286,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
                   value={addressForm.city}
                   onChange={(e) => setAddressForm((f) => ({ ...f, city: e.target.value }))}
                   placeholder="Dublin"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-900 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-900 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
 
@@ -297,7 +297,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
                   value={addressForm.state}
                   onChange={(e) => setAddressForm((f) => ({ ...f, state: e.target.value }))}
                   placeholder="Leinster"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-900 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-900 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
 
@@ -309,7 +309,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
                   value={addressForm.postal_code}
                   onChange={(e) => setAddressForm((f) => ({ ...f, postal_code: e.target.value }))}
                   placeholder="D02 X285"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-900 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-900 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
 
@@ -321,7 +321,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
                   value={addressForm.country}
                   onChange={(e) => setAddressForm((f) => ({ ...f, country: e.target.value }))}
                   placeholder="Ireland"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-900 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-900 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
 
@@ -347,7 +347,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition shadow-sm"
+                  className="px-6 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg text-xs font-bold transition shadow-sm"
                 >
                   Save Address
                 </button>
@@ -394,7 +394,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
                   header: 'Status',
                   render: (val) =>
                     val === true ? (
-                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 border border-purple-200">
+                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-accent-bg dark:bg-accent-bg text-accent dark:text-accent border border-accent-border">
                         Default
                       </span>
                     ) : (
@@ -412,7 +412,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
                         <button
                           onClick={() => handleSetDefaultAddress(item.id)}
                           title="Set Default"
-                          className="p-1 text-purple-600 border border-purple-200 hover:bg-purple-50 dark:border-purple-900/40 dark:hover:bg-purple-950/20 rounded-lg transition"
+                          className="p-1 text-accent border border-accent-border hover:bg-accent-bg dark:border-accent-border dark:hover:bg-accent-bg rounded-lg transition"
                         >
                           <Check size={14} />
                         </button>
@@ -456,7 +456,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
       )}
 
       {/* Facts Memory manager */}
-      <div className="p-6 border rounded-xl glassmorphism space-y-4">
+      <div className="p-6 glass-card space-y-4">
         <h3 className="font-bold text-lg text-gray-800 dark:text-gray-200">
           What I remember about you
         </h3>
@@ -476,7 +476,7 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
             {facts.map((fact) => (
               <div key={fact.id} className="py-3 flex items-center justify-between gap-4">
                 <div>
-                  <span className="inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-purple-100 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 mr-3">
+                  <span className="inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-accent-bg dark:bg-accent-bg text-accent dark:text-accent mr-3">
                     {fact.category}
                   </span>
                   <span className="text-sm font-medium text-gray-700 dark:text-gray-300">

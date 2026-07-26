@@ -57,11 +57,11 @@ export const SellerDashboard: React.FC = () => {
   }
 
   return (
-    <div className="w-full min-h-screen bg-gray-50/50 dark:bg-gray-950 text-left">
+    <div className="w-full min-h-screen bg-app text-left">
       <div className="max-w-6xl mx-auto py-8 px-4 space-y-8">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">
+          <h1 className="text-3xl font-semibold text-gray-800 dark:text-gray-200">
             Seller Dashboard
           </h1>
           <p className="text-sm text-gray-500">
@@ -71,17 +71,17 @@ export const SellerDashboard: React.FC = () => {
 
         {/* KPI Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-          <div className="p-6 border rounded-2xl bg-white dark:bg-gray-900 shadow-sm relative overflow-hidden group hover:shadow-md transition">
+          <div className="glass-card p-6 relative overflow-hidden group transition">
             <div className="flex justify-between items-start">
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                 Gross Sales
               </span>
-              <span className="p-2 bg-purple-50 dark:bg-purple-950/20 text-purple-600 rounded-xl">
+              <span className="p-2 bg-accent-bg dark:bg-accent-bg text-accent rounded-xl">
                 <DollarSign size={18} />
               </span>
             </div>
             <div className="mt-4">
-              <p className="text-2xl font-black text-gray-800 dark:text-gray-200">
+              <p className="text-2xl font-semibold text-gray-800 dark:text-gray-200">
                 €{totalSales.toFixed(2)}
               </p>
               <p className="text-[10px] text-gray-400 mt-1 font-semibold">
@@ -90,7 +90,7 @@ export const SellerDashboard: React.FC = () => {
             </div>
           </div>
 
-          <div className="p-6 border rounded-2xl bg-white dark:bg-gray-900 shadow-sm relative overflow-hidden group hover:shadow-md transition">
+          <div className="glass-card p-6 relative overflow-hidden group transition">
             <div className="flex justify-between items-start">
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                 Active Fulfillment
@@ -100,24 +100,24 @@ export const SellerDashboard: React.FC = () => {
               </span>
             </div>
             <div className="mt-4">
-              <p className="text-2xl font-black text-amber-500">{activeOrdersCount} Pending</p>
+              <p className="text-2xl font-semibold text-amber-500">{activeOrdersCount} Pending</p>
               <p className="text-[10px] text-gray-400 mt-1 font-semibold">
                 Orders awaiting delivery status updates
               </p>
             </div>
           </div>
 
-          <div className="p-6 border rounded-2xl bg-white dark:bg-gray-900 shadow-sm relative overflow-hidden group hover:shadow-md transition">
+          <div className="glass-card p-6 relative overflow-hidden group transition">
             <div className="flex justify-between items-start">
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                 My Catalog
               </span>
-              <span className="p-2 bg-purple-50 dark:bg-purple-950/20 text-purple-600 rounded-xl">
+              <span className="p-2 bg-accent-bg dark:bg-accent-bg text-accent rounded-xl">
                 <Box size={18} />
               </span>
             </div>
             <div className="mt-4">
-              <p className="text-2xl font-black text-gray-800 dark:text-gray-200">
+              <p className="text-2xl font-semibold text-gray-800 dark:text-gray-200">
                 {totalProductsCount} Products
               </p>
               <p className="text-[10px] text-gray-400 mt-1 font-semibold">
@@ -132,13 +132,13 @@ export const SellerDashboard: React.FC = () => {
           {/* Recent Pending Orders */}
           <div className="border border-gray-200 dark:border-gray-800 rounded-2xl p-6 bg-white dark:bg-gray-900 shadow-sm space-y-4">
             <div className="flex justify-between items-center pb-2 border-b dark:border-gray-800">
-              <h3 className="font-extrabold text-sm text-gray-800 dark:text-gray-200 flex items-center gap-2">
-                <ShoppingBag size={16} className="text-purple-600" />
+              <h3 className="font-semibold text-sm text-gray-800 dark:text-gray-200 flex items-center gap-2">
+                <ShoppingBag size={16} className="text-accent" />
                 <span>Recent Pending Orders</span>
               </h3>
               <Link
                 to="/fulfillment"
-                className="flex items-center gap-1 text-[10px] font-bold text-purple-600 hover:text-purple-700 uppercase"
+                className="flex items-center gap-1 text-[10px] font-bold text-accent hover:text-accent uppercase"
               >
                 <span>View All Queue</span>
                 <ArrowRight size={12} />
@@ -165,7 +165,7 @@ export const SellerDashboard: React.FC = () => {
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="font-black text-gray-800 dark:text-gray-200">
+                      <p className="font-semibold text-gray-800 dark:text-gray-200">
                         €{order.total.toFixed(2)}
                       </p>
                       <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-amber-50 text-amber-600 dark:bg-amber-950/20 dark:text-amber-400 uppercase mt-1 inline-block">
@@ -181,13 +181,13 @@ export const SellerDashboard: React.FC = () => {
           {/* Low Stock Alerts */}
           <div className="border border-gray-200 dark:border-gray-800 rounded-2xl p-6 bg-white dark:bg-gray-900 shadow-sm space-y-4">
             <div className="flex justify-between items-center pb-2 border-b dark:border-gray-800">
-              <h3 className="font-extrabold text-sm text-gray-800 dark:text-gray-200 flex items-center gap-2">
+              <h3 className="font-semibold text-sm text-gray-800 dark:text-gray-200 flex items-center gap-2">
                 <AlertTriangle size={16} className="text-amber-500" />
                 <span>Low Stock Alerts (&lt; 10)</span>
               </h3>
               <Link
                 to="/inventory"
-                className="flex items-center gap-1 text-[10px] font-bold text-purple-600 hover:text-purple-700 uppercase"
+                className="flex items-center gap-1 text-[10px] font-bold text-accent hover:text-accent uppercase"
               >
                 <span>Manage Stock</span>
                 <ArrowRight size={12} />
@@ -225,7 +225,7 @@ export const SellerDashboard: React.FC = () => {
                     </div>
                     <div className="text-right">
                       <span
-                        className={`px-2 py-0.5 rounded font-black text-xs ${p.stock === 0 ? 'bg-red-50 text-red-600 dark:bg-red-950/20' : 'bg-amber-50 text-amber-600 dark:bg-amber-950/20'}`}
+                        className={`px-2 py-0.5 rounded font-semibold text-xs ${p.stock === 0 ? 'bg-red-50 text-red-600 dark:bg-red-950/20' : 'bg-amber-50 text-amber-600 dark:bg-amber-950/20'}`}
                       >
                         {p.stock === 0 ? 'OUT' : `${p.stock} left`}
                       </span>

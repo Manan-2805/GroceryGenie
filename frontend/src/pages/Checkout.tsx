@@ -139,18 +139,15 @@ export const Checkout: React.FC = () => {
   return (
     <div className="max-w-xl mx-auto py-8 px-4 space-y-6 text-left">
       <div>
-        <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">Checkout</h1>
+        <h1 className="text-3xl font-semibold text-gray-800 dark:text-gray-200">Checkout</h1>
         <p className="text-sm text-gray-500">
           Select or enter a delivery address to complete your order
         </p>
       </div>
 
-      <form
-        onSubmit={handleSubmit}
-        className="border rounded-2xl glassmorphism p-6 shadow-md space-y-6"
-      >
+      <form onSubmit={handleSubmit} className="glass-card p-6 space-y-6">
         <h3 className="font-bold text-lg text-gray-800 dark:text-gray-200 flex items-center gap-2 border-b pb-3 dark:border-gray-900">
-          <ShieldCheck className="text-purple-600" />
+          <ShieldCheck className="text-accent" />
           <span>Delivery Details</span>
         </h3>
 
@@ -172,11 +169,11 @@ export const Checkout: React.FC = () => {
                     }}
                     className={`p-4 border rounded-xl cursor-pointer transition flex items-start gap-3 bg-white dark:bg-gray-950 ${
                       isSelected
-                        ? 'border-purple-600 ring-1 ring-purple-600'
+                        ? 'border-accent ring-1 ring-accent'
                         : 'border-gray-200 dark:border-gray-800 hover:bg-gray-50/50 dark:hover:bg-gray-900/20'
                     }`}
                   >
-                    <div className="mt-0.5 text-purple-600">
+                    <div className="mt-0.5 text-accent">
                       {typeof addr.label === 'string' && addr.label.toLowerCase() === 'work' ? (
                         <Briefcase size={16} />
                       ) : (
@@ -206,7 +203,7 @@ export const Checkout: React.FC = () => {
               type="button"
               onClick={() => setUseNewAddress(true)}
               className={`flex items-center gap-1.5 text-xs font-bold transition mt-2 ${
-                useNewAddress ? 'text-purple-600' : 'text-gray-500 hover:text-purple-600'
+                useNewAddress ? 'text-accent' : 'text-gray-500 hover:text-accent'
               }`}
             >
               <PlusCircle size={16} />
@@ -220,7 +217,7 @@ export const Checkout: React.FC = () => {
           <div className="space-y-4 pt-2 border-t dark:border-gray-900">
             {savedAddresses.length > 0 && (
               <div className="flex justify-between items-center">
-                <span className="text-xs font-bold text-purple-600">New Delivery Address</span>
+                <span className="text-xs font-bold text-accent">New Delivery Address</span>
                 <button
                   type="button"
                   onClick={() => {
@@ -251,7 +248,7 @@ export const Checkout: React.FC = () => {
                   value={newAddress.label}
                   onChange={(e) => setNewAddress((a) => ({ ...a, label: e.target.value }))}
                   placeholder="Home, Office, Work"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-600 text-xs"
+                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
                 />
               </div>
               <div className="space-y-1">
@@ -262,7 +259,7 @@ export const Checkout: React.FC = () => {
                   value={newAddress.country}
                   onChange={(e) => setNewAddress((a) => ({ ...a, country: e.target.value }))}
                   placeholder="Ireland"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-600 text-xs"
+                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
                 />
               </div>
             </div>
@@ -278,7 +275,7 @@ export const Checkout: React.FC = () => {
                 value={newAddress.line1}
                 onChange={(e) => setNewAddress((a) => ({ ...a, line1: e.target.value }))}
                 placeholder="123 Main Street"
-                className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-600 text-xs"
+                className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
               />
             </div>
 
@@ -292,7 +289,7 @@ export const Checkout: React.FC = () => {
                 value={newAddress.line2}
                 onChange={(e) => setNewAddress((a) => ({ ...a, line2: e.target.value }))}
                 placeholder="Apt 4B"
-                className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-600 text-xs"
+                className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
               />
             </div>
 
@@ -306,7 +303,7 @@ export const Checkout: React.FC = () => {
                   value={newAddress.city}
                   onChange={(e) => setNewAddress((a) => ({ ...a, city: e.target.value }))}
                   placeholder="Dublin"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-600 text-xs"
+                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
                 />
               </div>
 
@@ -318,7 +315,7 @@ export const Checkout: React.FC = () => {
                   value={newAddress.state}
                   onChange={(e) => setNewAddress((a) => ({ ...a, state: e.target.value }))}
                   placeholder="Leinster"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-600 text-xs"
+                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
                 />
               </div>
 
@@ -330,7 +327,7 @@ export const Checkout: React.FC = () => {
                   value={newAddress.postal_code}
                   onChange={(e) => setNewAddress((a) => ({ ...a, postal_code: e.target.value }))}
                   placeholder="D01 A234"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-600 text-xs"
+                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
                 />
               </div>
             </div>
@@ -341,7 +338,7 @@ export const Checkout: React.FC = () => {
           <button
             type="submit"
             disabled={placing}
-            className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold transition flex justify-center items-center gap-2 shadow-lg"
+            className="w-full py-3 bg-accent hover:bg-accent-hover text-white rounded-xl font-bold transition flex justify-center items-center gap-2 shadow-lg"
           >
             {placing ? 'Placing Order...' : 'Place Secure Order'}
           </button>

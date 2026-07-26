@@ -16,8 +16,14 @@ export type VoiceSessionState = {
   audioLevel: number; // 0-1 for waveform visualization
   optionsRequest: {
     text: string;
-    options: Array<{ label: string; value: string; description?: string }>;
+    options: Array<{
+      label: string;
+      value: string;
+      description?: string;
+      actions?: Array<{ label: string; value: string }>;
+    }>;
     freeInputAllowed: boolean;
+    cardVariant?: string;
   } | null;
   roleSwitchRequest: {
     text: string;
@@ -47,10 +53,16 @@ type VoiceMessage = {
   navigate_to?: string;
   navigate_label?: string;
   session_id?: string;
-  options?: Array<{ label: string; value: string; description?: string }>;
+  options?: Array<{
+    label: string;
+    value: string;
+    description?: string;
+    actions?: Array<{ label: string; value: string }>;
+  }>;
   free_input_allowed?: boolean;
   needed_role?: string;
   original_tool?: string;
+  card_variant?: string;
 };
 
 const VoiceSessionContext = createContext<VoiceSessionContextType | null>(null);
@@ -304,9 +316,16 @@ export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
                         text: data.text as string,
                         options: Array.isArray(data.options) ? data.options : [],
                         freeInputAllowed: data.free_input_allowed !== false,
+                        ...(typeof data.card_variant === 'string'
+                          ? { cardVariant: data.card_variant }
+                          : {}),
                       },
                     }));
                   }
+                  break;
+                case 'toggle_theme':
+                  // Pure client-side toggle — dispatch the same event text chat uses
+                  window.dispatchEvent(new CustomEvent('agent-toggle-theme'));
                   break;
                 case 'role_switch_request':
                   if (typeof data.text === 'string') {

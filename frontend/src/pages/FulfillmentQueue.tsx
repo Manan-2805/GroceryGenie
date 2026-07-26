@@ -82,7 +82,7 @@ export const FulfillmentQueue: React.FC = () => {
       case 'packed':
         return 'bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400';
       case 'out_for_delivery':
-        return 'bg-purple-100 text-purple-600 dark:bg-purple-950/40 dark:text-purple-400';
+        return 'bg-accent-bg text-accent dark:bg-accent-bg dark:text-accent';
       case 'delivered':
         return 'bg-green-100 text-green-600 dark:bg-green-950/40 dark:text-green-400';
       default:
@@ -130,9 +130,7 @@ export const FulfillmentQueue: React.FC = () => {
       header: 'Total Value',
       sortable: true,
       render: (val) => (
-        <span className="font-bold text-purple-600 dark:text-purple-400">
-          €{Number(val).toFixed(2)}
-        </span>
+        <span className="font-bold text-accent dark:text-accent">€{Number(val).toFixed(2)}</span>
       ),
     },
     {
@@ -160,8 +158,8 @@ export const FulfillmentQueue: React.FC = () => {
           }}
           className={`flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-bold transition ${
             selectedOrderId === item.id
-              ? 'bg-purple-600 text-white'
-              : 'bg-purple-100 hover:bg-purple-200 text-purple-600 dark:bg-purple-950/40 dark:hover:bg-purple-950/70 dark:text-purple-400'
+              ? 'bg-accent text-white'
+              : 'bg-accent-bg hover:bg-accent-bg text-accent dark:bg-accent-bg dark:hover:bg-accent-bg dark:text-accent'
           }`}
         >
           <Eye size={12} />
@@ -182,7 +180,7 @@ export const FulfillmentQueue: React.FC = () => {
     <div className="w-full min-h-screen bg-gray-50/50 dark:bg-gray-950 text-left">
       <div className="max-w-6xl mx-auto py-8 px-4 space-y-6">
         <div>
-          <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">
+          <h1 className="text-3xl font-semibold text-gray-800 dark:text-gray-200">
             Fulfillment Queue
           </h1>
           <p className="text-sm text-gray-500">
@@ -221,12 +219,12 @@ export const FulfillmentQueue: React.FC = () => {
 
         {/* Selected Order Breakdown */}
         {selectedOrder !== undefined && (
-          <div className="border border-purple-200 dark:border-purple-900/50 rounded-2xl p-6 bg-white dark:bg-gray-900 shadow-md space-y-6">
+          <div className="border border-accent-border dark:border-accent-border rounded-2xl p-6 bg-white dark:bg-gray-900 shadow-md space-y-6">
             <div className="flex flex-wrap justify-between items-center gap-4 border-b border-gray-100 dark:border-gray-800 pb-4">
               <div>
-                <h3 className="text-lg font-extrabold text-gray-800 dark:text-gray-200">
+                <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
                   Fulfill Order{' '}
-                  <span className="font-mono text-purple-600 dark:text-purple-400">
+                  <span className="font-mono text-accent dark:text-accent">
                     #{selectedOrder.id.slice(0, 8)}
                   </span>
                 </h3>
@@ -242,7 +240,7 @@ export const FulfillmentQueue: React.FC = () => {
                   onClick={() => {
                     void handleUpdateStatus(selectedOrder.id, selectedOrder.status);
                   }}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition shadow-md shadow-purple-500/20"
+                  className="flex items-center gap-2 px-5 py-2.5 bg-accent hover:bg-accent-hover text-white rounded-xl text-xs font-bold transition shadow-md shadow-glass"
                 >
                   <CheckCircle2 size={16} />
                   <span>{getStatusButtonText(selectedOrder.status)}</span>
@@ -358,7 +356,7 @@ export const FulfillmentQueue: React.FC = () => {
                             className="w-10 h-10 rounded-lg object-cover"
                           />
                         ) : (
-                          <div className="w-10 h-10 rounded-lg bg-purple-100 dark:bg-purple-900/20 flex items-center justify-center font-bold text-purple-600">
+                          <div className="w-10 h-10 rounded-lg bg-accent-bg dark:bg-accent-bg flex items-center justify-center font-bold text-accent">
                             {item.product?.name?.slice(0, 1) ?? 'P'}
                           </div>
                         )}
@@ -375,7 +373,7 @@ export const FulfillmentQueue: React.FC = () => {
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="font-bold text-purple-600 dark:text-purple-400">
+                        <p className="font-bold text-accent dark:text-accent">
                           Qty: {item.quantity}
                         </p>
                         <p className="text-[10px] text-gray-400">

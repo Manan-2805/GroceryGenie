@@ -106,23 +106,38 @@ async def seller_list_products(
 async def seller_create_product(
     db: AsyncSession,
     user_id: UUID,
-    name: str,
-    description: str = "",
-    category: str = "General",
-    price: float = 0.0,
-    stock: int = 0,
+    name: str | None = None,
+    description: str | None = None,
+    category: str | None = None,
+    price: float | None = None,
+    stock: int | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Create a new product as seller and auto-sync to Qdrant."""
+    """Create a new product as seller and auto-sync to Qdrant.
+
+    All parameters are optional at the tool level; required-field validation
+    is enforced by the orchestrator's slot-filling guard before this is called.
+    """
     from decimal import Decimal
+
+    # Null-safe defaults — should never reach here with nulls after slot-filling,
+    # but guard anyway to prevent NOT NULL DB crashes.
+    safe_name = (name or "").strip()
+    safe_description = (description or "").strip()
+    safe_category = (category or "General").strip()
+    safe_price = Decimal(str(price)) if price is not None else Decimal("0.00")
+    safe_stock = int(stock) if stock is not None else 0
+
+    if not safe_name:
+        return {"success": False, "message": "Product name is required."}
 
     product = Product(
         seller_id=user_id,
-        name=name,
-        description=description,
-        category=category,
-        price=Decimal(str(price)),
-        stock=stock,
+        name=safe_name,
+        description=safe_description,
+        category=safe_category,
+        price=safe_price,
+        stock=safe_stock,
     )
     db.add(product)
     await db.commit()
@@ -133,7 +148,7 @@ async def seller_create_product(
 
     return {
         "success": True,
-        "message": f"Product '{name}' created and indexed for search.",
+        "message": f"Product '{safe_name}' created and indexed for search.",
         "product_id": str(product.id),
     }
 

@@ -154,7 +154,7 @@ export const Cart: React.FC = () => {
       header: 'Total',
       sortable: true,
       render: (_, item) => (
-        <span className="font-bold text-purple-600 dark:text-purple-400">
+        <span className="font-bold text-accent dark:text-accent">
           €{(item.product.price * item.quantity).toFixed(2)}
         </span>
       ),
@@ -183,7 +183,7 @@ export const Cart: React.FC = () => {
   return (
     <div className="max-w-6xl mx-auto py-8 px-4 space-y-6 text-left">
       <div>
-        <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">Shopping Cart</h1>
+        <h1 className="text-3xl font-semibold text-gray-800 dark:text-gray-200">Shopping Cart</h1>
         <p className="text-sm text-gray-500">Review your grocery items before checking out</p>
       </div>
 
@@ -193,7 +193,7 @@ export const Cart: React.FC = () => {
           <p className="text-gray-400 text-sm">Your shopping cart is empty.</p>
           <Link
             to="/items"
-            className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition inline-block"
+            className="px-5 py-2.5 bg-accent hover:bg-accent-hover text-white rounded-lg text-xs font-bold transition inline-block"
           >
             Start Shopping
           </Link>
@@ -211,10 +211,8 @@ export const Cart: React.FC = () => {
           </div>
 
           {/* Cart Summary */}
-          <div className="border rounded-2xl glassmorphism p-6 shadow-md space-y-6">
-            <h3 className="font-extrabold text-lg text-gray-800 dark:text-gray-200">
-              Cart Summary
-            </h3>
+          <div className="glass-card p-6 space-y-6">
+            <h3 className="font-semibold text-lg text-gray-800 dark:text-gray-200">Cart Summary</h3>
 
             <div className="divide-y divide-gray-100 dark:divide-gray-900 space-y-3">
               <div className="flex justify-between text-sm py-2">
@@ -227,15 +225,15 @@ export const Cart: React.FC = () => {
                 <span className="text-gray-500">Delivery</span>
                 <span className="font-semibold text-gray-800 dark:text-gray-200">FREE</span>
               </div>
-              <div className="flex justify-between text-base font-black py-3">
+              <div className="flex justify-between text-base font-semibold py-3">
                 <span>Total</span>
-                <span className="text-purple-600 dark:text-purple-400">€{total.toFixed(2)}</span>
+                <span className="text-accent dark:text-accent">€{total.toFixed(2)}</span>
               </div>
             </div>
 
             <Link
               to="/checkout"
-              className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold transition flex justify-center items-center gap-2 shadow-lg"
+              className="w-full py-3 bg-accent hover:bg-accent-hover text-white rounded-xl font-bold transition flex justify-center items-center gap-2 shadow-lg"
             >
               <span>Proceed to Checkout</span>
               <ArrowRight size={18} />

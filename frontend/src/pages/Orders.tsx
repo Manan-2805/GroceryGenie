@@ -140,7 +140,7 @@ export const Orders: React.FC = () => {
       case 'packed':
         return 'bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400';
       case 'out_for_delivery':
-        return 'bg-purple-100 text-purple-600 dark:bg-purple-950/40 dark:text-purple-400';
+        return 'bg-accent-bg text-accent dark:bg-accent-bg dark:text-accent';
       case 'delivered':
         return 'bg-green-100 text-green-600 dark:bg-green-950/40 dark:text-green-400';
       default:
@@ -191,7 +191,7 @@ export const Orders: React.FC = () => {
                 <div
                   className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all duration-300 z-10 ${
                     isActive
-                      ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-500/20'
+                      ? 'bg-accent text-white border-accent shadow-md shadow-glass'
                       : 'bg-white dark:bg-gray-950 text-gray-400 border-gray-200 dark:border-gray-800'
                   }`}
                 >
@@ -199,7 +199,7 @@ export const Orders: React.FC = () => {
                 </div>
                 <div className="text-left md:text-center">
                   <p
-                    className={`text-xs font-bold uppercase tracking-wider ${isActive ? 'text-purple-600' : 'text-gray-400'}`}
+                    className={`text-xs font-bold uppercase tracking-wider ${isActive ? 'text-accent' : 'text-gray-400'}`}
                   >
                     {stepLabels[step]}
                   </p>
@@ -244,9 +244,7 @@ export const Orders: React.FC = () => {
       header: 'Total Value',
       sortable: true,
       render: (val) => (
-        <span className="font-bold text-purple-600 dark:text-purple-400">
-          €{Number(val).toFixed(2)}
-        </span>
+        <span className="font-bold text-accent dark:text-accent">€{Number(val).toFixed(2)}</span>
       ),
     },
     {
@@ -272,8 +270,8 @@ export const Orders: React.FC = () => {
           onClick={() => handleSelectOrder(item.id)}
           className={`flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-bold transition ${
             selectedOrderId === item.id
-              ? 'bg-purple-600 text-white'
-              : 'bg-purple-100 hover:bg-purple-200 text-purple-600 dark:bg-purple-950/40 dark:hover:bg-purple-950/70 dark:text-purple-400'
+              ? 'bg-accent text-white'
+              : 'bg-accent-bg hover:bg-accent-bg text-accent dark:bg-accent-bg dark:hover:bg-accent-bg dark:text-accent'
           }`}
         >
           <Eye size={12} />
@@ -293,7 +291,7 @@ export const Orders: React.FC = () => {
   return (
     <div className="max-w-6xl mx-auto py-8 px-4 space-y-8 text-left">
       <div>
-        <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">Your Orders</h1>
+        <h1 className="text-3xl font-semibold text-gray-800 dark:text-gray-200">Your Orders</h1>
         <p className="text-sm text-gray-500">Track and view history of your grocery orders</p>
       </div>
 
@@ -337,12 +335,12 @@ export const Orders: React.FC = () => {
 
           {/* Details Section of the Selected Order */}
           {selectedOrder && (
-            <div className="border border-purple-200 dark:border-purple-900/50 rounded-2xl p-6 bg-purple-50/5 dark:bg-purple-950/5 shadow-md space-y-6">
+            <div className="border border-accent-border dark:border-accent-border rounded-2xl p-6 bg-accent-bg/5 dark:bg-accent-bg/5 shadow-md space-y-6">
               <div className="flex flex-wrap justify-between items-center gap-4 border-b border-gray-200 dark:border-gray-800 pb-4">
                 <div>
-                  <h3 className="text-lg font-extrabold text-gray-800 dark:text-gray-200">
+                  <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
                     Order Details{' '}
-                    <span className="font-mono text-purple-600 dark:text-purple-400">
+                    <span className="font-mono text-accent dark:text-accent">
                       #{selectedOrder.id.slice(0, 8)}
                     </span>
                   </h3>
@@ -431,7 +429,7 @@ export const Orders: React.FC = () => {
                                 className="w-10 h-10 rounded-lg object-cover"
                               />
                             ) : (
-                              <div className="w-10 h-10 rounded-lg bg-purple-100 dark:bg-purple-900/20 flex items-center justify-center font-bold text-purple-600">
+                              <div className="w-10 h-10 rounded-lg bg-accent-bg dark:bg-accent-bg flex items-center justify-center font-bold text-accent">
                                 {item.product?.name?.slice(0, 1) ?? 'P'}
                               </div>
                             )}
@@ -449,7 +447,7 @@ export const Orders: React.FC = () => {
                           </div>
 
                           <div className="flex flex-col md:items-end gap-2">
-                            <span className="font-bold text-xs text-purple-600 dark:text-purple-400">
+                            <span className="font-bold text-xs text-accent dark:text-accent">
                               Subtotal: €{(item.price_at_purchase * item.quantity).toFixed(2)}
                             </span>
 

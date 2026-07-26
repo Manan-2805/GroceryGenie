@@ -118,15 +118,15 @@ export const Catalog: React.FC = () => {
   return (
     <div className="max-w-6xl mx-auto py-8 px-4 text-left space-y-6">
       <div>
-        <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">Catalog</h1>
+        <h1 className="text-3xl font-semibold text-gray-800 dark:text-gray-200">Catalog</h1>
         <p className="text-sm text-gray-500">Explore and search our premium grocery catalog</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         {/* Sidebar Filters */}
-        <div className="lg:col-span-1 border dark:border-gray-800 bg-white dark:bg-gray-900 p-6 rounded-2xl shadow-sm h-fit space-y-6">
+        <div className="lg:col-span-1 glass-card p-6 h-fit space-y-6">
           <div className="flex items-center gap-2 pb-3 border-b dark:border-gray-800">
-            <Filter size={18} className="text-purple-600" />
+            <Filter size={18} className="text-accent" />
             <h3 className="font-bold text-gray-800 dark:text-gray-200">Filters & Sorting</h3>
           </div>
 
@@ -139,7 +139,7 @@ export const Catalog: React.FC = () => {
                 placeholder="Apple, Milk..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                className="w-full pl-9 pr-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
               />
               <Search size={14} className="absolute left-3 top-3 text-gray-400" />
             </div>
@@ -151,7 +151,7 @@ export const Catalog: React.FC = () => {
             <select
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
-              className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+              className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
             >
               <option value="">All Categories</option>
               {categories.map((c) => (
@@ -171,7 +171,7 @@ export const Catalog: React.FC = () => {
                 placeholder="Min"
                 value={minPrice}
                 onChange={(e) => setMinPrice(e.target.value)}
-                className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
               />
               <span className="text-gray-400 text-xs">-</span>
               <input
@@ -179,7 +179,7 @@ export const Catalog: React.FC = () => {
                 placeholder="Max"
                 value={maxPrice}
                 onChange={(e) => setMaxPrice(e.target.value)}
-                className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
           </div>
@@ -217,7 +217,7 @@ export const Catalog: React.FC = () => {
               type="checkbox"
               checked={onlyInStock}
               onChange={(e) => setOnlyInStock(e.target.checked)}
-              className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 dark:bg-gray-900 border-gray-300"
+              className="w-4 h-4 rounded text-accent focus:ring-accent dark:bg-gray-900 border-gray-300"
             />
           </div>
 
@@ -228,7 +228,7 @@ export const Catalog: React.FC = () => {
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
-                className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 <option value="name">Name</option>
                 <option value="price">Price</option>
@@ -243,7 +243,7 @@ export const Catalog: React.FC = () => {
               <select
                 value={sortDir}
                 onChange={(e) => setSortDir(e.target.value)}
-                className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-purple-600"
+                className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 <option value="asc">Ascending (A-Z / Low-High)</option>
                 <option value="desc">Descending (Z-A / High-Low)</option>
@@ -255,7 +255,7 @@ export const Catalog: React.FC = () => {
         {/* Product Listing */}
         <div className="lg:col-span-3 space-y-6 max-h-screen overflow-y-auto">
           {products.length === 0 && !loading ? (
-            <div className="p-12 border border-dashed rounded-2xl text-center text-gray-400 bg-white dark:bg-gray-900">
+            <div className="p-12 border border-dashed border-border rounded-2xl text-center text-muted glass-card">
               No matching products found in the catalog.
             </div>
           ) : (
@@ -264,7 +264,7 @@ export const Catalog: React.FC = () => {
                 <Link
                   key={product.id}
                   to={`/items/${product.id}`}
-                  className="group border border-gray-100 dark:border-gray-900 bg-white dark:bg-gray-900 hover:-translate-y-1 hover:shadow-md rounded-2xl overflow-hidden shadow-sm flex flex-col transition duration-300"
+                  className="group glass-card hover:-translate-y-0.5 overflow-hidden flex flex-col transition duration-200"
                 >
                   {/* Product Image */}
                   <div className="h-44 w-full bg-gray-50 dark:bg-gray-950/40 p-4 flex items-center justify-center border-b dark:border-gray-800">
@@ -283,7 +283,7 @@ export const Catalog: React.FC = () => {
                   <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
                     <div className="space-y-1">
                       <div className="flex justify-between items-center">
-                        <span className="text-[9px] font-bold uppercase tracking-wider text-purple-600">
+                        <span className="text-[9px] font-bold uppercase tracking-wider text-accent">
                           {product.category}
                         </span>
                         <span className="text-xs font-bold text-amber-500 flex items-center gap-0.5">
@@ -291,14 +291,14 @@ export const Catalog: React.FC = () => {
                           <Star size={10} className="fill-amber-400 text-amber-400" />
                         </span>
                       </div>
-                      <h3 className="font-extrabold text-sm text-gray-800 dark:text-gray-200">
+                      <h3 className="font-semibold text-sm text-gray-800 dark:text-gray-200">
                         {product.name}
                       </h3>
                       <p className="text-xs text-gray-400 line-clamp-2">{product.description}</p>
                     </div>
 
                     <div className="flex justify-between items-center pt-2">
-                      <span className="text-base font-black text-purple-600 dark:text-purple-400">
+                      <span className="text-base font-semibold text-accent dark:text-accent">
                         €{product.price.toFixed(2)}
                       </span>
                       <span

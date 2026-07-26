@@ -46,7 +46,7 @@ check-backend:
 	cd backend; uv run pip-audit
 	cd backend; uv run python -m pytest -v -m "not e2e"
 
-check: lint format security test
+check: lint format security check-backend
 	Write-Host "All pre-commit checks passed successfully on local machine!"
 
 migrate:

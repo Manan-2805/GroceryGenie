@@ -59,9 +59,8 @@ async def sse_generator(
 
         if result["type"] == "permission_request":
             # Emit permission request
-            yield f"event: permission_request\ndata: {json.dumps(result)}\n\n"
+            yield f"event: message\ndata: {json.dumps(result)}\n\n"
         elif result["type"] == "role_switch_request":
-            # Emit role switch request as an options_request with special type
             role_switch_data = {
                 "type": "role_switch_request",
                 "text": result.get("text", ""),
@@ -72,6 +71,13 @@ async def sse_generator(
                 "free_input_allowed": False,
             }
             yield f"event: message\ndata: {json.dumps(role_switch_data)}\n\n"
+        elif result.get("type") == "toggle_theme":
+            # Pure client-side toggle — emit a dedicated event type
+            theme_data = {
+                "type": "toggle_theme",
+                "text": result.get("text", "Theme toggled."),
+            }
+            yield f"event: message\ndata: {json.dumps(theme_data)}\n\n"
         elif result.get("type") == "options_response":
             # Emit options request
             options_data = {

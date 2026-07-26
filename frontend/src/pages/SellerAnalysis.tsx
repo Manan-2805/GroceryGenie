@@ -37,7 +37,7 @@ export const SellerAnalysis: React.FC = () => {
 
   // Category breakdown calculations
   const categoryColors: Record<string, string> = {
-    Produce: '#A855F7',
+    Produce: '#2563EB',
     'Dairy & Eggs': '#3B82F6',
     Pantry: '#10B981',
     Beverages: '#F59E0B',
@@ -150,7 +150,7 @@ export const SellerAnalysis: React.FC = () => {
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
           <div>
-            <h1 className="text-3xl font-extrabold text-gray-800 dark:text-gray-200">
+            <h1 className="text-3xl font-semibold text-gray-800 dark:text-gray-200">
               Sales Analysis
             </h1>
             <p className="text-sm text-gray-500">
@@ -166,12 +166,12 @@ export const SellerAnalysis: React.FC = () => {
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                 Gross Revenue
               </span>
-              <span className="p-2 bg-purple-50 dark:bg-purple-950/20 text-purple-600 rounded-xl">
+              <span className="p-2 bg-accent-bg dark:bg-accent-bg text-accent rounded-xl">
                 <DollarSign size={18} />
               </span>
             </div>
             <div className="mt-4">
-              <p className="text-2xl font-black text-gray-800 dark:text-gray-200">
+              <p className="text-2xl font-semibold text-gray-800 dark:text-gray-200">
                 €{grossRevenue.toFixed(2)}
               </p>
               <span className="flex items-center gap-1 text-[10px] font-bold text-green-600 dark:text-green-400 mt-1">
@@ -186,12 +186,12 @@ export const SellerAnalysis: React.FC = () => {
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                 Total Orders
               </span>
-              <span className="p-2 bg-purple-50 dark:bg-purple-950/20 text-purple-600 rounded-xl">
+              <span className="p-2 bg-accent-bg dark:bg-accent-bg text-accent rounded-xl">
                 <ShoppingBag size={18} />
               </span>
             </div>
             <div className="mt-4">
-              <p className="text-2xl font-black text-gray-800 dark:text-gray-200">
+              <p className="text-2xl font-semibold text-gray-800 dark:text-gray-200">
                 {totalOrdersCount} orders
               </p>
               <span className="flex items-center gap-1 text-[10px] font-bold text-green-600 dark:text-green-400 mt-1">
@@ -206,12 +206,12 @@ export const SellerAnalysis: React.FC = () => {
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                 Avg Order Value
               </span>
-              <span className="p-2 bg-purple-50 dark:bg-purple-950/20 text-purple-600 rounded-xl">
+              <span className="p-2 bg-accent-bg dark:bg-accent-bg text-accent rounded-xl">
                 <TrendingUp size={18} />
               </span>
             </div>
             <div className="mt-4">
-              <p className="text-2xl font-black text-gray-800 dark:text-gray-200">
+              <p className="text-2xl font-semibold text-gray-800 dark:text-gray-200">
                 €{aov.toFixed(2)}
               </p>
               <span className="flex items-center gap-1 text-[10px] font-bold text-green-600 dark:text-green-400 mt-1">
@@ -226,12 +226,12 @@ export const SellerAnalysis: React.FC = () => {
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                 Active Customers
               </span>
-              <span className="p-2 bg-purple-50 dark:bg-purple-950/20 text-purple-600 rounded-xl">
+              <span className="p-2 bg-accent-bg dark:bg-accent-bg text-accent rounded-xl">
                 <Users size={18} />
               </span>
             </div>
             <div className="mt-4">
-              <p className="text-2xl font-black text-gray-800 dark:text-gray-200">
+              <p className="text-2xl font-semibold text-gray-800 dark:text-gray-200">
                 {activeCustomersCount} unique
               </p>
               <span className="flex items-center gap-1 text-[10px] font-bold text-green-600 dark:text-green-400 mt-1">
@@ -247,7 +247,7 @@ export const SellerAnalysis: React.FC = () => {
           {/* Revenue Trend Line Chart */}
           <div className="lg:col-span-2 p-6 border rounded-2xl bg-white dark:bg-gray-900 shadow-sm flex flex-col justify-between space-y-4">
             <div>
-              <h3 className="font-extrabold text-sm text-gray-800 dark:text-gray-200">
+              <h3 className="font-semibold text-sm text-gray-800 dark:text-gray-200">
                 Revenue Growth Trend
               </h3>
               <p className="text-[11px] text-gray-400 mt-0.5">
@@ -265,13 +265,6 @@ export const SellerAnalysis: React.FC = () => {
                   viewBox={`0 0 ${chartWidth} ${chartHeight}`}
                   className="w-full min-w-[400px] h-auto overflow-visible select-none"
                 >
-                  <defs>
-                    <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#A855F7" stopOpacity="0.25" />
-                      <stop offset="100%" stopColor="#A855F7" stopOpacity="0.00" />
-                    </linearGradient>
-                  </defs>
-
                   {/* Gridlines */}
                   {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
                     const y = chartHeight - ratio * (chartHeight - 40) - 20;
@@ -300,15 +293,15 @@ export const SellerAnalysis: React.FC = () => {
                     );
                   })}
 
-                  {/* Area under curve */}
-                  {areaD && <path d={areaD} fill="url(#chartGradient)" />}
+                  {/* Area under curve — flat accent fill */}
+                  {areaD && <path d={areaD} fill="var(--accent)" fillOpacity="0.2" />}
 
                   {/* Main line */}
                   {pathD && (
                     <path
                       d={pathD}
                       fill="none"
-                      stroke="#A855F7"
+                      stroke="var(--accent)"
                       strokeWidth="3"
                       strokeLinecap="round"
                     />
@@ -321,7 +314,7 @@ export const SellerAnalysis: React.FC = () => {
                         cx={p.x}
                         cy={p.y}
                         r="5"
-                        fill="#A855F7"
+                        fill="var(--accent)"
                         className="stroke-white dark:stroke-gray-900 stroke-2 hover:r-7 transition-all"
                       />
                       {/* Hover tooltip text */}
@@ -329,7 +322,7 @@ export const SellerAnalysis: React.FC = () => {
                         x={p.x}
                         y={p.y - 12}
                         textAnchor="middle"
-                        className="text-[10px] font-extrabold fill-purple-600 dark:fill-purple-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="text-[10px] font-semibold fill-[var(--accent)] opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         €{p.val.toFixed(2)}
                       </text>
@@ -352,7 +345,7 @@ export const SellerAnalysis: React.FC = () => {
           {/* Category Share Donut Chart */}
           <div className="p-6 border rounded-2xl bg-white dark:bg-gray-900 shadow-sm flex flex-col justify-between space-y-6">
             <div>
-              <h3 className="font-extrabold text-sm text-gray-800 dark:text-gray-200">
+              <h3 className="font-semibold text-sm text-gray-800 dark:text-gray-200">
                 Category Sales Share
               </h3>
               <p className="text-[11px] text-gray-400 mt-0.5">
@@ -406,7 +399,7 @@ export const SellerAnalysis: React.FC = () => {
               {/* Inner details text */}
               <div className="absolute text-center">
                 <p className="text-[9px] font-bold text-gray-400 uppercase">Sales</p>
-                <p className="text-sm font-black text-gray-800 dark:text-gray-200">
+                <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
                   €{totalCatSales.toFixed(2)}
                 </p>
               </div>
@@ -423,7 +416,7 @@ export const SellerAnalysis: React.FC = () => {
                     />
                     <span className="font-medium text-gray-600 dark:text-gray-400">{cat.name}</span>
                   </div>
-                  <span className="font-extrabold text-gray-800 dark:text-gray-200">
+                  <span className="font-semibold text-gray-800 dark:text-gray-200">
                     {cat.percentage}%{' '}
                     <span className="text-[10px] text-gray-400 font-normal">
                       (€{cat.value.toFixed(2)})
