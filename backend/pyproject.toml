@@ -40,6 +40,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.20.0",
     "bandit>=1.9.4",
     "mypy>=2.1.0",
     "pip-audit>=2.10.1",
@@ -72,3 +73,4 @@ testpaths = ["tests"]
 markers = [
     "e2e: end-to-end tests that require running backend/frontend services and browser",
 ]
+addopts = "--ignore=tests/e2e"

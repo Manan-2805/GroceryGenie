@@ -1,4 +1,4 @@
-"""Product search tool - pure Python, no LLM calls."""
+"""Product search and compare tools — pure Python, no LLM calls."""
 
 from typing import Any
 
@@ -6,10 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.search import search_products as search_products_service
 
-# Maximum products to show before asking the user to narrow down
-_TOO_MANY_THRESHOLD = 8
-# Fetch at most this many from the hybrid search
-_FETCH_LIMIT = 5
+# Maximum products to return per search (no narrowing flow — removed per plan Q1)
+_FETCH_LIMIT = 10
 
 
 async def search_products(
@@ -20,12 +18,13 @@ async def search_products(
     min_price: float | None = None,
     max_price: float | None = None,
     min_rating: float | None = None,
-    in_stock_only: bool = True,
+    in_stock_only: bool = False,  # default False — show all unless user asks
+    **kwargs: Any,
 ) -> list[dict[str, Any]] | dict[str, Any]:
-    """Search products with optional filters. Returns serialized product list.
+    """Search products with optional filters.
 
-    If too many results (>_TOO_MANY_THRESHOLD), returns a dict with `too_many: True`
-    so the orchestrator can ask the user to narrow down their search.
+    Returns a list of up to _FETCH_LIMIT products serialised as dicts.
+    Never returns a 'too_many' dict — the narrowing flow was removed.
     """
     products = await search_products_service(
         db=db,
@@ -40,7 +39,7 @@ async def search_products(
     for p in products:
         if in_stock_only and p.stock <= 0:
             continue
-        if min_rating and float(p.avg_rating) < min_rating:
+        if min_rating is not None and float(p.avg_rating) < min_rating:
             continue
         results.append(
             {
@@ -52,24 +51,8 @@ async def search_products(
                 "stock": p.stock,
                 "avg_rating": float(p.avg_rating),
                 "sold_count": p.sold_count,
+                "is_active": p.is_active,
             }
         )
-
-    # If too many results, return a narrowing request with product summaries
-    if len(results) > _TOO_MANY_THRESHOLD:
-        categories = list({r["category"] for r in results})
-        prices = [float(r["price"]) for r in results]
-        price_min = min(prices)
-        price_max = max(prices)
-
-        return {
-            "too_many": True,
-            "count": len(results),
-            "products": results[:5],  # Send top 5 for context
-            "categories": categories,
-            "price_range": {"min": price_min, "max": price_max},
-            "product_names": [r["name"] for r in results[:10]],
-            "message": f"Found {len(results)} products. The user needs to narrow down their search.",
-        }
 
     return results

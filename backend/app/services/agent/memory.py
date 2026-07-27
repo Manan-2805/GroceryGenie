@@ -1,143 +1,29 @@
-import json
+"""
+agent/memory.py — session history and user facts helpers.
+
+Dead functions removed (Task 13):
+  - classify_and_store_fact()  — replaced by Mem0.add() called from orchestrator
+  - get_relevant_user_facts()  — replaced by Mem0.search() in services/memory.py
+
+Only get_user_facts() is kept as a thin helper used by the Mem0 bridge.
+"""
+
 import logging
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.db.models.enums import FactCategory
 from app.db.models.memory import PersistentFact
-from app.services.agent.llm import call_llm, extract_json_from_response
 
 logger = logging.getLogger("app.services.agent.memory")
 
-CLASSIFIER_SYSTEM_PROMPT = """You are an accurate, rule-based text classifier.
-Your task is to analyze a user statement and extract any durable personal facts or standing instructions that are intended to be remembered long-term.
-
-A durable personal fact or standing instruction includes:
-1. Dietary requirements or restrictions ("I am vegan", "lactose intolerant").
-2. Serious allergies ("I'm highly allergic to tree nuts").
-3. Strong standing shopping preferences ("I prefer organic items", "never suggest brand X").
-4. Clear standing instructions for actions ("Always compare by unit price first").
-
-Do NOT extract:
-1. One-off purchase requests ("add tomatoes to my cart").
-2. Ordinary search queries ("find lactose-free milk").
-3. Ephemeral questions ("what is the price of almond milk?").
-4. Conversational filler ("hello", "thanks", "that sounds good").
-
-You MUST return a JSON object with the following fields:
-{
-  "has_fact": true if a durable fact is present else false,
-  "fact_text": "A concise, clean summary of the fact (e.g. 'Allergic to peanuts' or 'Is vegan' or 'Prefers organic products')",
-  "category": "dietary" or "preference" or "instruction" or "other" (set to null if has_fact is false)
-}
-
-Output ONLY the raw JSON object. Do not include markdown code block formatting (like ```json), and do not include any explanatory prose."""
-
-
-async def classify_and_store_fact(
-    db: AsyncSession, user_id: uuid.UUID, user_message: str
-) -> PersistentFact | None:
-    """Analyzes user turn, extracts durable facts, and persists them to Postgres."""
-    try:
-        response_str = await call_llm(
-            system_prompt=CLASSIFIER_SYSTEM_PROMPT,
-            user_prompt=user_message,
-            temperature=0.0,
-            max_tokens=256,
-            call_type="fact_classifier",
-        )
-
-        # Use robust JSON extraction
-        cleaned_response = extract_json_from_response(response_str)
-        data = json.loads(cleaned_response)
-        if not data.get("has_fact"):
-            return None
-
-        fact_text = data.get("fact_text", "").strip()
-        category_str = data.get("category", "other")
-
-        if not fact_text:
-            return None
-
-        # Convert category string to enum
-        try:
-            category = FactCategory(category_str)
-        except ValueError:
-            category = FactCategory.other
-
-        # Check if this user already has an identical fact text to prevent duplicate writes
-        dup_query = select(PersistentFact).where(
-            PersistentFact.user_id == user_id,
-            PersistentFact.fact_text.ilike(fact_text),
-        )
-        dup_result = await db.execute(dup_query)
-        existing = dup_result.scalar_one_or_none()
-        if existing:
-            return existing
-
-        fact = PersistentFact(
-            user_id=user_id,
-            fact_text=fact_text,
-            category=category,
-        )
-        db.add(fact)
-        await db.commit()
-        await db.refresh(fact)
-        logger.info(f"Stored persistent memory fact for user {user_id}: '{fact_text}'")
-        return fact
-
-    except Exception as e:
-        logger.error(f"Error classifying or storing fact: {e}")
-        return None
-
 
 async def get_user_facts(db: AsyncSession, user_id: uuid.UUID) -> list[PersistentFact]:
-    """Retrieve all persistent facts for a given user."""
+    """Retrieve all persistent facts for a given user (most recent first)."""
     result = await db.execute(
         select(PersistentFact)
         .where(PersistentFact.user_id == user_id)
         .order_by(PersistentFact.created_at.desc())
     )
     return list(result.scalars().all())
-
-
-async def get_relevant_user_facts(
-    db: AsyncSession, user_id: uuid.UUID, query_text: str | None = None, limit: int = 3
-) -> list[PersistentFact]:
-    """Retrieve user facts filtered by semantic relevance to query_text."""
-    all_facts = await get_user_facts(db, user_id)
-    if not all_facts:
-        return []
-    if not query_text or not query_text.strip() or len(all_facts) <= limit:
-        return all_facts[:limit]
-
-    try:
-        import numpy as np
-
-        from app.services.rag.embedder import embed_text
-
-        query_vec = np.array(embed_text(query_text.strip()), dtype=np.float32)
-        query_norm = np.linalg.norm(query_vec)
-        if query_norm == 0:
-            return all_facts[:limit]
-
-        scored_facts: list[tuple[float, PersistentFact]] = []
-        for fact in all_facts:
-            fact_vec = np.array(embed_text(fact.fact_text), dtype=np.float32)
-            fact_norm = np.linalg.norm(fact_vec)
-            if fact_norm > 0:
-                sim = float(np.dot(query_vec, fact_vec) / (query_norm * fact_norm))
-            else:
-                sim = 0.0
-            scored_facts.append((sim, fact))
-
-        scored_facts.sort(key=lambda x: x[0], reverse=True)
-        relevant = [fact for sim, fact in scored_facts if sim >= 0.35]
-        if not relevant:
-            return all_facts[:limit]
-        return relevant[:limit]
-    except Exception as e:
-        logger.warning(f"Error computing semantic fact relevance: {e}")
-        return all_facts[:limit]

@@ -36,7 +36,7 @@ async def inventory_search(
     All parameters are optional — called with no params returns the full inventory.
 
     Args:
-        stock_filter: "in_stock" (stock > 10), "low_stock" (1–10), "out_of_stock" (0)
+        stock_filter: "in_stock" (stock > 10), "low_stock" (1-10), "out_of_stock" (0)
         min_rating:   Only products with avg_rating >= this value
         min_sold:     Only products with sold_count >= this value
         max_sold:     Only products with sold_count <= this value

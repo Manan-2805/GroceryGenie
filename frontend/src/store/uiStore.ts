@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+const SESSION_STORAGE_KEY = 'grocerygenie_session_id';
+
 type UIState = {
   theme: 'light' | 'dark';
   sessionId: string | null;
@@ -9,6 +11,7 @@ type UIState = {
   setTheme: (theme: 'light' | 'dark') => void;
   toggleTheme: () => void;
   setSessionId: (id: string | null) => void;
+  clearSession: () => void;
   setVoiceOk: (ok: boolean) => void;
   setBackendUnreachable: (unreachable: boolean) => void;
   setAppError: (error: string | null) => void;
@@ -16,8 +19,9 @@ type UIState = {
 
 export const useUIStore = create<UIState>((set) => ({
   theme: (localStorage.getItem('theme') as 'light' | 'dark') || 'light',
-  sessionId: null,
-  voiceOk: true, // Default to true, updated on app mount
+  // Initialize sessionId from localStorage so page refreshes continue the same session
+  sessionId: localStorage.getItem(SESSION_STORAGE_KEY) ?? null,
+  voiceOk: true,
   backendUnreachable: false,
   appError: null,
   setTheme: (theme) => {
@@ -33,8 +37,21 @@ export const useUIStore = create<UIState>((set) => ({
       return { theme: newTheme };
     });
   },
-  setSessionId: (sessionId) => set({ sessionId }),
+  setSessionId: (sessionId) => {
+    if (sessionId !== null && sessionId !== undefined) {
+      localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+    } else {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+    }
+    set({ sessionId });
+  },
+  clearSession: () => {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+    set({ sessionId: null });
+  },
   setVoiceOk: (voiceOk) => set({ voiceOk }),
   setBackendUnreachable: (backendUnreachable) => set({ backendUnreachable }),
   setAppError: (appError) => set({ appError }),
 }));
+
+export { SESSION_STORAGE_KEY };

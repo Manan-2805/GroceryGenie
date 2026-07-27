@@ -12,7 +12,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useVoiceSession } from '../contexts/VoiceSessionContext';
-import { authService } from '../services/api';
+import { api, authService } from '../services/api';
 import { useUIStore } from '../store/uiStore';
 
 type OptionAction = {
@@ -89,7 +89,7 @@ const nextId = () => {
 
 export const Agent: React.FC = () => {
   const navigate = useNavigate();
-  const { sessionId, setSessionId, voiceOk, toggleTheme } = useUIStore();
+  const { sessionId, setSessionId, clearSession, voiceOk, toggleTheme } = useUIStore();
   const {
     state: voiceState,
     startSession,
@@ -120,6 +120,32 @@ export const Agent: React.FC = () => {
       });
   }, []);
 
+  // On mount: if a session_id exists in localStorage (via uiStore init), reload history
+  useEffect(() => {
+    if (sessionId === null || sessionId === undefined) return;
+    api
+      .get<{ messages: { role: string; content: string }[]; count: number }>(`/chat/history`, {
+        params: { session_id: sessionId, limit: 20 },
+      })
+      .then((res) => {
+        const data = res.data;
+        if (data === null || data === undefined || data.count === 0) return;
+        const loadedMessages: Message[] = data.messages.map((m) => ({
+          id: nextId(),
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: m.content,
+          type: 'text' as const,
+        }));
+        setMode('text');
+        setMessages(loadedMessages);
+      })
+      .catch(() => {
+        // History load failed — start fresh, don't block the user
+      });
+    // Only run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Listen for theme-toggle events dispatched by the SSE handler
   useEffect(() => {
     const handler = () => toggleTheme();
@@ -136,6 +162,8 @@ export const Agent: React.FC = () => {
   const handleStartTextChat = () => {
     setMode('text');
     setChatError(false);
+    // Clear any existing session so a fresh one is created on first send
+    clearSession();
     setMessages([
       {
         id: nextId(),
@@ -143,7 +171,6 @@ export const Agent: React.FC = () => {
         content: `Hi ${userName !== '' ? userName : 'there'}! I'm your GroceryGenie assistant. I can help you find products, manage your cart, check orders, manage addresses, and more. How can I help?`,
       },
     ]);
-    setSessionId(window.crypto.randomUUID());
     window.setTimeout(() => {
       inputRef.current?.focus();
     }, 100);
@@ -151,15 +178,17 @@ export const Agent: React.FC = () => {
 
   const handleStartVoiceChat = async () => {
     setMode('voice');
-    const newSessionId = window.crypto.randomUUID();
-    setSessionId(newSessionId);
-    await startSession(newSessionId);
+    // Reuse existing session if present; create new one otherwise
+    const voiceSessionId = sessionId ?? window.crypto.randomUUID();
+    setSessionId(voiceSessionId);
+    await startSession(voiceSessionId);
   };
 
   const handleBackToSelect = () => {
     if (mode === 'voice') {
       endSession();
     }
+    clearSession();
     setMode('select');
     setMessages([]);
   };
@@ -203,6 +232,16 @@ export const Agent: React.FC = () => {
       }
 
       if (!response.body) throw new Error('No response stream body');
+
+      // Persist session_id from response header (set by backend on session creation)
+      const returnedSessionId = response.headers.get('X-Session-ID');
+      if (
+        returnedSessionId !== null &&
+        returnedSessionId !== undefined &&
+        returnedSessionId !== sessionId
+      ) {
+        setSessionId(returnedSessionId);
+      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();

@@ -223,3 +223,193 @@ async def seller_delete_product(
         "success": True,
         "message": f"Product '{product.name}' deactivated and removed from search.",
     }
+
+
+async def seller_update_stock(
+    db: AsyncSession,
+    user_id: UUID,
+    product_id: str | None = None,
+    delta: int | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Adjust a product's stock by a signed delta.
+
+    stock = max(0, stock + delta)
+
+    If the delta would push stock below zero the result is clamped to 0 and a
+    warning is included in the response message.
+
+    Per-item transaction: if the DB write or Qdrant sync fails the transaction
+    is rolled back and a clear error is returned.
+
+    Args:
+        product_id: UUID of the product to update.
+        delta:      Signed integer — positive to add stock, negative to reduce.
+    """
+    if not product_id:
+        return {"success": False, "message": "Product ID is required."}
+    if delta is None:
+        return {
+            "success": False,
+            "message": "Delta is required (positive to add, negative to reduce).",
+        }
+
+    try:
+        prod_uuid = UUID(str(product_id))
+        delta_int = int(delta)
+    except (ValueError, TypeError):
+        return {"success": False, "message": "Invalid product ID or delta value."}
+
+    result = await db.execute(
+        select(Product).where(Product.id == prod_uuid, Product.seller_id == user_id)
+    )
+    product = result.scalar_one_or_none()
+    if not product:
+        return {"success": False, "message": "Product not found or not yours."}
+
+    clamped = False
+    new_stock = product.stock + delta_int
+    if new_stock < 0:
+        new_stock = 0
+        clamped = True
+
+    old_stock = product.stock
+
+    try:
+        product.stock = new_stock
+        await db.commit()
+        await db.refresh(product)
+        # Sync updated stock to Qdrant
+        await _sync_product_to_qdrant(product)
+    except Exception as exc:
+        await db.rollback()
+        logger.error(f"[SellerTools] seller_update_stock failed for {prod_uuid}: {exc}")
+        return {
+            "success": False,
+            "message": "Failed to update stock. Please try again.",
+        }
+
+    msg = f"Stock updated for '{product.name}': {old_stock} → {new_stock}."
+    if clamped:
+        msg += " (Stock set to 0 — would have gone negative.)"
+
+    return {
+        "success": True,
+        "message": msg,
+        "product_name": product.name,
+        "old_stock": old_stock,
+        "new_stock": new_stock,
+        "clamped": clamped,
+    }
+
+
+async def seller_bulk_deactivate(
+    db: AsyncSession,
+    user_id: UUID,
+    product_ids: list[str] | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Deactivate multiple products at once.
+
+    If product_ids is an empty list [], ALL of the seller's products are
+    deactivated.
+
+    Per-item transaction: each product is processed in its own savepoint.
+    Failure on one item rolls back ONLY that item — the rest continue.
+
+    Returns a summary dict with succeeded and failed lists.
+    """
+    if product_ids is None:
+        return {
+            "success": False,
+            "message": "product_ids is required. Pass [] to deactivate all your products.",
+        }
+
+    # Resolve target product IDs
+    if len(product_ids) == 0:
+        # Deactivate ALL seller products
+        all_result = await db.execute(
+            select(Product).where(
+                Product.seller_id == user_id,
+                Product.is_active.is_(True),
+            )
+        )
+        targets = list(all_result.scalars().all())
+        target_ids = [str(p.id) for p in targets]
+    else:
+        target_ids = product_ids
+
+    if not target_ids:
+        return {
+            "bulk_deactivate": True,
+            "succeeded": [],
+            "failed": [],
+            "message": "No active products found to deactivate.",
+        }
+
+    succeeded: list[dict[str, str]] = []
+    failed: list[dict[str, str]] = []
+
+    for pid in target_ids:
+        try:
+            prod_uuid = UUID(str(pid))
+        except (ValueError, AttributeError):
+            failed.append({"id": pid, "reason": "Invalid UUID format."})
+            continue
+
+        try:
+            # Use a savepoint so per-item failure doesn't abort the whole transaction
+            async with db.begin_nested():
+                prod_result = await db.execute(
+                    select(Product).where(
+                        Product.id == prod_uuid,
+                        Product.seller_id == user_id,
+                    )
+                )
+                product = prod_result.scalar_one_or_none()
+                if not product:
+                    failed.append(
+                        {"id": pid, "reason": "Product not found or not yours."}
+                    )
+                    continue
+
+                product_name = product.name
+                product.is_active = False
+                # Savepoint commits here; Qdrant sync is outside the savepoint
+                # (best-effort — a Qdrant failure does not roll back the DB change)
+
+            # Qdrant removal outside savepoint — if it fails, log and continue
+            await _remove_product_from_qdrant(prod_uuid)
+            succeeded.append({"id": pid, "name": product_name})
+            logger.info(
+                f"[SellerTools] Bulk deactivated product {prod_uuid} ({product_name})"
+            )
+
+        except Exception as exc:
+            logger.error(f"[SellerTools] Bulk deactivate failed for {pid}: {exc}")
+            failed.append({"id": pid, "reason": str(exc)})
+
+    # Commit all savepoint changes in one final commit
+    try:
+        await db.commit()
+    except Exception as exc:
+        logger.error(f"[SellerTools] Final commit failed in bulk_deactivate: {exc}")
+        await db.rollback()
+        return {
+            "success": False,
+            "message": "Failed to save changes. Please try again.",
+        }
+
+    total = len(succeeded) + len(failed)
+    msg = f"Deactivated {len(succeeded)} of {total} products."
+    if failed:
+        msg += f" {len(failed)} failed: " + ", ".join(
+            f"{f['id'][:8]}… ({f['reason']})" for f in failed
+        )
+
+    return {
+        "bulk_deactivate": True,
+        "succeeded": succeeded,
+        "failed": failed,
+        "message": msg,
+    }

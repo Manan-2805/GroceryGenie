@@ -1,4 +1,4 @@
-"""Order tools - pure Python, no LLM calls."""
+"""Order tools — pure Python, no LLM calls."""
 
 import datetime
 from typing import Any
@@ -24,6 +24,8 @@ async def get_order_detail(
 
     Returns items with quantities/prices, current status, delivery address
     snapshot, and status timestamps (placed_at, packed_at, etc.).
+    The 'order_detail': True discriminator key ensures the formatter
+    checks this BEFORE the cart formatter (which also has 'items' + 'total').
     """
     try:
         order_uuid = UUID(order_id)
@@ -51,6 +53,7 @@ async def get_order_detail(
         item_list.append(
             {
                 "product_name": product.name if product else "Unknown",
+                "product_id": str(item.product_id) if item.product_id else None,
                 "quantity": item.quantity,
                 "price_at_purchase": float(item.price_at_purchase),
                 "subtotal": float(item.price_at_purchase) * item.quantity,
@@ -61,7 +64,7 @@ async def get_order_detail(
         return ts.isoformat() if ts else None
 
     return {
-        "order_detail": True,  # discriminator for the formatter
+        "order_detail": True,  # discriminator — MUST be checked BEFORE cart
         "id": str(order.id),
         "status": order.status.value,
         "total": float(order.total),
@@ -77,10 +80,25 @@ async def get_order_detail(
 async def view_orders(
     db: AsyncSession,
     user_id: UUID,
+    status: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    min_total: float | None = None,
+    max_total: float | None = None,
+    product_name: str | None = None,
     **kwargs: Any,
 ) -> list[dict[str, Any]] | dict[str, Any]:
-    """View user's order history."""
+    """View user's order history with optional filters.
 
+    Filters (all optional):
+        status       — exact OrderStatus value e.g. "placed", "delivered"
+        date_from    — ISO date string "YYYY-MM-DD", inclusive
+        date_to      — ISO date string "YYYY-MM-DD", inclusive
+        min_total    — order total >= this value
+        max_total    — order total <= this value
+        product_name — show only orders that contain a product whose name
+                       contains this substring (case-insensitive ILIKE join)
+    """
     order_result = await db.execute(
         select(Order)
         .where(Order.customer_id == user_id)
@@ -93,6 +111,29 @@ async def view_orders(
 
     result = []
     for order in orders:
+        # ── Apply scalar filters first (cheap) ──────────────────────────
+        if status and order.status.value != status:
+            continue
+        if min_total is not None and float(order.total) < min_total:
+            continue
+        if max_total is not None and float(order.total) > max_total:
+            continue
+        if date_from:
+            try:
+                from_dt = datetime.date.fromisoformat(date_from)
+                if order.created_at and order.created_at.date() < from_dt:
+                    continue
+            except ValueError:
+                pass
+        if date_to:
+            try:
+                to_dt = datetime.date.fromisoformat(date_to)
+                if order.created_at and order.created_at.date() > to_dt:
+                    continue
+            except ValueError:
+                pass
+
+        # ── Fetch items ─────────────────────────────────────────────────
         items_result = await db.execute(
             select(OrderItem).where(OrderItem.order_id == order.id)
         )
@@ -106,10 +147,19 @@ async def view_orders(
             item_list.append(
                 {
                     "product_name": product.name if product else "Unknown",
+                    "product_id": str(item.product_id) if item.product_id else None,
                     "quantity": item.quantity,
                     "price_at_purchase": float(item.price_at_purchase),
                 }
             )
+
+        # ── Product-name filter (applied after items are loaded) ─────────
+        if product_name:
+            pn_lower = product_name.lower()
+            if not any(
+                pn_lower in (i["product_name"] or "").lower() for i in item_list
+            ):
+                continue
 
         result.append(
             {
@@ -122,6 +172,9 @@ async def view_orders(
                 "items": item_list,
             }
         )
+
+    if not result:
+        return {"empty": True, "message": "No orders match your filters."}
 
     return result
 
@@ -145,7 +198,7 @@ async def place_order(
     addr_result = await db.execute(
         select(Address).where(
             Address.user_id == user_id,
-            Address.is_default,
+            Address.is_default.is_(True),
         )
     )
     address = addr_result.scalar_one_or_none()
@@ -192,7 +245,6 @@ async def place_order(
                 "message": f"Insufficient stock for {product.name}. Only {product.stock} available.",
             }
 
-    # Create order with correct field names matching the Order model
     order = Order(
         customer_id=user_id,
         status=OrderStatus.placed,

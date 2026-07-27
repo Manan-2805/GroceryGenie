@@ -230,4 +230,15 @@ class Settings(BaseSettings):
         return detect_torch_device()
 
 
+# ---------------------------------------------------------------------------
+# Fuzzy matching thresholds — used by fast_path.py for option selection.
+# Defined here so they can be tuned without touching fast_path logic.
+# ---------------------------------------------------------------------------
+FUZZY_COSINE_THRESHOLD: float = (
+    0.7  # minimum cosine similarity to auto-select an option
+)
+FUZZY_SEQUENCE_THRESHOLD: float = (
+    0.6  # minimum SequenceMatcher ratio to auto-select an option
+)
+
 settings = Settings()
