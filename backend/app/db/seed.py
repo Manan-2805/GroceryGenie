@@ -272,30 +272,42 @@ async def seed_data() -> None:
 
         # Update Qdrant and Neo4j layout
         logger.info("Initializing vector search and knowledge graph clients...")
-        seed_store_layout()
+        await seed_store_layout()
 
         logger.info("Indexing products in Qdrant and Neo4j...")
+        neo4j_failures = 0
+        qdrant_failures = 0
         for product in seeded_products:
             await db.refresh(product)
 
-            await index_product_in_qdrant(
-                product_id=product.id,
-                name=product.name,
-                description=product.description,
-                category=product.category,
-                price=float(product.price),
-                is_active=product.is_active,
-            )
+            try:
+                await index_product_in_qdrant(
+                    product_id=product.id,
+                    name=product.name,
+                    description=product.description,
+                    category=product.category,
+                    price=float(product.price),
+                    is_active=product.is_active,
+                )
+            except Exception as e:
+                logger.error(f"Failed to index product {product.id} in Qdrant: {e}")
+                qdrant_failures += 1
 
-            link_product_to_aisle(
-                product_id=product.id,
-                name=product.name,
-                category=product.category,
-            )
+            try:
+                await link_product_to_aisle(
+                    product_id=product.id,
+                    name=product.name,
+                    category=product.category,
+                )
+            except Exception as e:
+                logger.error(f"Failed to link product {product.id} in Neo4j: {e}")
+                neo4j_failures += 1
+
             logger.info(f"Indexed & Linked product: {product.name}")
 
         logger.info(
-            f"Seeding complete. {len(seeded_products)} products indexed. "
+            f"Seeding complete. {len(seeded_products)} products indexed (Qdrant fails: {qdrant_failures}, "
+            f"Neo4j fails: {neo4j_failures}). "
             "Single Dev User: dev@GroceryGenie.com (bypass login)"
         )
 

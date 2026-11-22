@@ -115,6 +115,7 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = Field(default="placeholder_client_id")
     GOOGLE_CLIENT_SECRET: str = Field(default="placeholder_client_secret")
     FRONTEND_URL: str = Field(default="http://localhost:5173")
+    GOOGLE_REDIRECT_URI: str = Field(default="http://localhost:5173/api/v1/auth/google/callback")
     ALLOWED_ORIGINS: str = Field(default="http://localhost:5173,http://localhost:8000")
 
     # JWT Auth config

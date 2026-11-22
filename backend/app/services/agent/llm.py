@@ -210,11 +210,11 @@ async def call_llm(
                     input_tokens = getattr(response.usage, "prompt_tokens", None)
                     output_tokens = getattr(response.usage, "completion_tokens", None)
 
-                if content is None:
+                if not content:
                     if attempt < MAX_RETRIES:
                         wait = _compute_retry_delay(attempt)
                         logger.warning(
-                            f"LLM provider '{provider_name}' returned None content (attempt {attempt + 1}), "
+                            f"LLM provider '{provider_name}' returned empty/None content (attempt {attempt + 1}), "
                             f"retrying in {wait:.1f}s..."
                         )
                         await asyncio.sleep(wait)
@@ -230,7 +230,7 @@ async def call_llm(
                         input_tokens=input_tokens,
                         output_tokens=output_tokens,
                         extra={"provider": provider_name, "model": model},
-                        error="LLM returned None content after all retries",
+                        error="LLM returned empty/None content after all retries",
                     )
                     # Move to next provider
                     break
@@ -256,11 +256,11 @@ async def call_llm(
 
                 logger.info(
                     f"LLM call successful: provider='{provider_name}', model={model}, "
-                    f"LLM Response Text='{content}'"
+                    f"LLM Response Text='{content}', "
                     f"call_type={call_type}, duration={duration_ms:.0f}ms, attempt={attempt + 1}"
                     + (
                         f", tokens_in={input_tokens}, tokens_out={output_tokens}"
-                        if input_tokens
+                        if input_tokens is not None
                         else ""
                     )
                 )

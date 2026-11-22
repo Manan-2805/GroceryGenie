@@ -28,6 +28,7 @@ async def inventory_search(
     min_price: float | None = None,
     max_price: float | None = None,
     category: str | None = None,
+    query: str | None = None,
     sort_by: str | None = None,
     **kwargs: Any,
 ) -> list[dict[str, Any]] | dict[str, Any]:
@@ -42,7 +43,8 @@ async def inventory_search(
         max_sold:     Only products with sold_count <= this value
         min_price:    Only products with price >= this value
         max_price:    Only products with price <= this value
-        category:     Exact category string match (case-insensitive)
+        category:     Partial case-insensitive match (e.g. "fruit" matches "Fruits")
+        query:        Name keyword search (e.g. "apple" matches "Fresh Fuji Apples")
         sort_by:      One of: stock_asc, stock_desc, rating_desc, sold_desc,
                       price_asc, price_desc (default: name_asc)
     """
@@ -73,8 +75,16 @@ async def inventory_search(
             continue
         if max_price is not None and float(p.price) > max_price:
             continue
-        # category
-        if category and p.category.lower() != category.lower():
+        # category — partial case-insensitive match so "Fruit" matches "Fruits",
+        # "Produce" etc. Also handle comma-separated values the LLM sometimes sends.
+        if category:
+            cat_filters = [c.strip().lower() for c in category.split(",") if c.strip()]
+            p_cat = p.category.lower()
+            if not any(cf in p_cat or p_cat in cf for cf in cat_filters):
+                continue
+
+        # query — name keyword search (partial, case-insensitive)
+        if query and query.strip().lower() not in p.name.lower():
             continue
 
         rows.append(

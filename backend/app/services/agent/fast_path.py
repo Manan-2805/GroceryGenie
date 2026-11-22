@@ -532,27 +532,42 @@ async def handle(
 
     last_options = await get_last_options(session_id)
     if last_options:
-        # 2a. Voice numeric / ordinal index matching ("the first one", "option 2")
-        idx = _extract_option_index(msg)
-        if idx is not None and 1 <= idx <= len(last_options):
-            selected_opt = last_options[idx - 1]
-            logger.info(
-                f"[FastPath] Voice index match: '{msg}' → option {idx}: "
-                f"'{selected_opt.get('label', '')}'"
-            )
-            action_value = _get_option_action(selected_opt)
-            if action_value:
-                return await handle(action_value, orchestrator)
+        # Only attempt fuzzy matching on short messages (≤ 6 words).
+        # Long sentences are queries/questions, not option selections.
+        word_count = len(msg.split())
+        is_short_message = word_count <= 6
 
-        # 2b. Fuzzy text match
-        matched = _best_option_match(msg, last_options)
-        if matched:
-            logger.info(
-                f"[FastPath] Fuzzy match: '{msg}' → '{matched.get('label', '')}'"
-            )
-            action_value = _get_option_action(matched)
-            if action_value:
-                return await handle(action_value, orchestrator)
+        # Only match if the message doesn't start with a question/list word.
+        # These patterns indicate the user is asking, not selecting.
+        _query_starters = (
+            "show", "list", "what", "which", "how", "are", "is", "do", "can",
+            "nope", "no", "why", "tell", "give", "find", "search", "display",
+        )
+        starts_with_query = msg_lower.split()[0] in _query_starters if msg_lower.split() else False
+
+        if is_short_message and not starts_with_query:
+            # 2a. Voice numeric / ordinal index matching ("the first one", "option 2")
+            idx = _extract_option_index(msg)
+            if idx is not None and 1 <= idx <= len(last_options):
+                selected_opt = last_options[idx - 1]
+                logger.info(
+                    f"[FastPath] Voice index match: '{msg}' → option {idx}: "
+                    f"'{selected_opt.get('label', '')}'"
+                )
+                action_value = _get_option_action(selected_opt)
+                if action_value:
+                    return await handle(action_value, orchestrator)
+
+            # 2b. Fuzzy text match — only dispatch if the best option has an action
+            # (i.e. it's an actionable card like "Add to Cart", not a list item)
+            matched = _best_option_match(msg, last_options)
+            if matched and _get_option_action(matched):
+                logger.info(
+                    f"[FastPath] Fuzzy match: '{msg}' → '{matched.get('label', '')}'"
+                )
+                action_value = _get_option_action(matched)
+                if action_value:
+                    return await handle(action_value, orchestrator)
 
     return None
 

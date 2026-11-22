@@ -50,7 +50,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Seed Neo4j store layout only in dev
         if settings.ENV_MODE == "development":
-            seed_store_layout()
+            await seed_store_layout()
 
         # Connect to Qdrant client to ensure collection is created
         get_qdrant_client()

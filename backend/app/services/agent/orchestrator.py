@@ -139,6 +139,19 @@ class AgentOrchestrator:
         if intent.fact_to_remember:
             await self._store_fact(intent.fact_to_remember, intent.fact_category)
 
+        # ── 4d. Clear pending state AND last_options on switch_role so
+        #        stale slot-fill from a different role never survives ────────
+        if intent.tool == "switch_role":
+            await sm.clear_pending(sid)
+            # Also clear cached last_options so fuzzy match doesn't fire
+            # stale inventory/product labels after a role change
+            try:
+                from app.services.agent.state_manager import _options_key
+                from app.services.memory import get_redis_client
+                await get_redis_client().delete(_options_key(sid))
+            except Exception:
+                pass
+
         # ── 5. RBAC ──────────────────────────────────────────────────────
         try:
             check_tool_permission(intent.tool, self.user_role)
@@ -246,6 +259,16 @@ class AgentOrchestrator:
             db=self.db,
             user_id=self.user_id,
         )
+
+        # ── Clear stale pending state + last_options on switch_role ──────
+        if intent.tool == "switch_role":
+            await sm.clear_pending(sid)
+            try:
+                from app.services.agent.state_manager import _options_key
+                from app.services.memory import get_redis_client
+                await get_redis_client().delete(_options_key(sid))
+            except Exception:
+                pass
 
         # toggle_theme
         if intent.tool == "toggle_theme":

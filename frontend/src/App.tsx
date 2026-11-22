@@ -75,7 +75,11 @@ export const AppContent: React.FC = () => {
   const fetchProfile = useCallback(async () => {
     try {
       const data = await authService.getMe();
-      setUser({ name: data.name, role: data.role });
+      if (data && typeof data === 'object' && 'name' in data && 'role' in data) {
+        setUser({ name: data.name, role: data.role });
+      } else {
+        setUser(null);
+      }
     } catch {
       setUser(null);
     } finally {
@@ -111,7 +115,11 @@ export const AppContent: React.FC = () => {
     try {
       await authService.switchRole(newRole);
       const data = await authService.getMe();
-      setUser({ name: data.name, role: data.role });
+      if (data && typeof data === 'object' && 'name' in data && 'role' in data) {
+        setUser({ name: data.name, role: data.role });
+      } else {
+        setUser(null);
+      }
     } catch (e) {
       console.error(e);
     }

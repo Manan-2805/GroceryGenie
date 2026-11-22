@@ -19,16 +19,36 @@ ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
 COPY pyproject.toml uv.lock ./
 
 # Install production dependencies only (--no-dev excludes bandit, mypy, pytest, playwright)
+# This is a CPU-only container (no NVIDIA runtime mounted). torch's Linux wheels (2.9+)
+# hard-require the CUDA/nvidia runtime libs at import, and the PyPI Linux build pulls the
+# whole ~2.5GB nvidia+cuda-toolkit+triton stack. We skip torch AND its CUDA-only dependency
+# subtree during sync, then install the last pure-CPU Linux build (2.6.0+cpu, ~200MB) plus
+# CPU onnxruntime. `--no-install-package` must list each CUDA dep because it only prunes the
+# named packages, not their full subtree.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-dev && \
-    rm -rf /app/.venv/lib/python3.12/site-packages/triton* && \
-    rm -rf /app/.venv/lib/python3.12/site-packages/nvidia/nccl* && \
-    rm -rf /app/.venv/lib/python3.12/site-packages/nvidia/nvshmem* && \
-    rm -rf /app/.venv/lib/python3.12/site-packages/nvidia/cusparselt* && \
-    find /app/.venv/lib/python3.12/site-packages/nvidia/ -name "libcusolver.so*" -delete 2>/dev/null || true && \
-    find /app/.venv/lib/python3.12/site-packages/nvidia/ -name "libcusparse.so*" -delete 2>/dev/null || true && \
-    find /app/.venv/lib/python3.12/site-packages/nvidia/ -name "libcufft.so*" -delete 2>/dev/null || true && \
-    find /app/.venv/lib/python3.12/site-packages/nvidia/ -name "libnvrtc.so*" -delete 2>/dev/null || true
+    uv sync --frozen --no-install-project --no-dev \
+      --no-install-package torch \
+      --no-install-package onnxruntime-gpu \
+      --no-install-package cuda-bindings \
+      --no-install-package cuda-toolkit \
+      --no-install-package nvidia-cublas \
+      --no-install-package nvidia-cuda-cupti \
+      --no-install-package nvidia-cuda-nvrtc \
+      --no-install-package nvidia-cuda-runtime \
+      --no-install-package nvidia-cudnn-cu13 \
+      --no-install-package nvidia-cufft \
+      --no-install-package nvidia-cufile \
+      --no-install-package nvidia-curand \
+      --no-install-package nvidia-cusolver \
+      --no-install-package nvidia-cusparse \
+      --no-install-package nvidia-cusparselt-cu13 \
+      --no-install-package nvidia-nccl-cu13 \
+      --no-install-package nvidia-nvjitlink \
+      --no-install-package nvidia-nvshmem-cu13 \
+      --no-install-package nvidia-nvtx \
+      --no-install-package triton 2>&1 && \
+    uv pip install --python /app/.venv/bin/python "torch==2.6.0+cpu" --extra-index-url https://download.pytorch.org/whl/cpu 2>&1 && \
+    uv pip install --python /app/.venv/bin/python onnxruntime 2>&1
 
 # Stage 2: Lean runtime image
 FROM python:3.12-slim

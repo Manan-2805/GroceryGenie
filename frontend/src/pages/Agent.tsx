@@ -77,8 +77,14 @@ type StreamEvent =
       text: string;
       options: { label: string; value: string; description?: string }[];
       free_input_allowed: boolean;
+      card_variant?: string;
     }
-  | { type: 'response'; text: string; options?: unknown[]; free_input_allowed?: boolean };
+  | {
+      type: 'response';
+      text: string;
+      options?: unknown[];
+      free_input_allowed?: boolean;
+    };
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 let _messageIdCounter = 0;
@@ -109,6 +115,8 @@ export const Agent: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  // Track the latest message ID for append-only operations across renders
+  const latestAssistantMsgIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     // Fetch user name for greeting
@@ -120,31 +128,31 @@ export const Agent: React.FC = () => {
       });
   }, []);
 
-  // On mount: if a session_id exists in localStorage (via uiStore init), reload history
+  // Load history when sessionId changes (mount or after clearSession + new session).
+  // Only auto-restores to text mode if no manual mode override has happened.
   useEffect(() => {
-    if (sessionId === null || sessionId === undefined) return;
+    if (!sessionId) return;
     api
       .get<{ messages: { role: string; content: string }[]; count: number }>(`/chat/history`, {
         params: { session_id: sessionId, limit: 20 },
       })
       .then((res) => {
         const data = res.data;
-        if (data === null || data === undefined || data.count === 0) return;
+        if (!data || data.count < 2) return;
         const loadedMessages: Message[] = data.messages.map((m) => ({
           id: nextId(),
           role: m.role === 'assistant' ? 'assistant' : 'user',
           content: m.content,
           type: 'text' as const,
         }));
-        setMode('text');
+        // Use functional updater so we don't overwrite a manual mode change
+        setMode((prev) => (prev === 'select' ? 'text' : prev));
         setMessages(loadedMessages);
       })
       .catch(() => {
         // History load failed — start fresh, don't block the user
       });
-    // Only run once on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sessionId]);
 
   // Listen for theme-toggle events dispatched by the SSE handler
   useEffect(() => {
@@ -206,6 +214,8 @@ export const Agent: React.FC = () => {
     }
 
     setIsSending(true);
+    // Reset the assistant message ID tracker for this new request
+    latestAssistantMsgIdRef.current = null;
 
     // Cancel previous request if any
     if (abortControllerRef.current) {
@@ -286,6 +296,25 @@ export const Agent: React.FC = () => {
                   id: nextId(),
                   role: 'assistant',
                   content: assistantResponse,
+                  type: 'text',
+                });
+              }
+              return updated;
+            });
+          } else if (data.type === 'response' && typeof data.text === 'string') {
+            // Non-streaming response from backend (e.g. "No products found", slot-fill questions, etc.)
+            const responseText = data.text;
+            setMessages((prev) => {
+              const updated = [...prev];
+              const lastMsg = updated[updated.length - 1];
+              if (lastMsg && lastMsg.role === 'assistant' && lastMsg.type === 'text' && lastMsg.content === '') {
+                // Replace empty placeholder with the actual response text
+                updated[updated.length - 1] = { ...lastMsg, content: responseText };
+              } else {
+                updated.push({
+                  id: nextId(),
+                  role: 'assistant',
+                  content: responseText,
                   type: 'text',
                 });
               }
@@ -775,7 +804,6 @@ export const Agent: React.FC = () => {
                               'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
                           };
                           // opt.description contains item names; derive status from label
-                          const statusMatch = opt.label.match(/—\s*(.+)$/);
                           const statusKey = opt.label.toLowerCase().includes('placed')
                             ? 'placed'
                             : opt.label.toLowerCase().includes('packed')
@@ -786,6 +814,7 @@ export const Agent: React.FC = () => {
                                   ? 'delivered'
                                   : 'placed';
                           const statusColor = STATUS_COLOR[statusKey] ?? '';
+                          const statusMatch = opt.label.match(/—\s*(.+)$/);
                           const statusLabel = statusMatch ? statusMatch[1] : '';
                           return (
                             <div

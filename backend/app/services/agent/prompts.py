@@ -80,7 +80,7 @@ User message: '{user_message}'"""
 # ---------------------------------------------------------------------------
 
 TOOL_HINTS_CUSTOMER = """
-- search_products: query (text), category (Fruits/Vegetables/Dairy/Meat/Beverages/Bakery/Snacks/Grains/Frozen/Other), min_price, max_price, min_rating (0-5), in_stock_only (default false)
+- search_products: query (text), category (Produce/Dairy & Eggs/Beverages/Pantry/Meat & Seafood), min_price, max_price, min_rating (0-5), in_stock_only (default false)
 - compare_products: product_ids (list of 2-3 UUIDs) — extract from context or search results
 - add_to_cart: product_id (UUID), quantity (integer, default 1)
 - remove_from_cart: product_id (UUID)
@@ -98,8 +98,8 @@ TOOL_HINTS_CUSTOMER = """
 
 TOOL_HINTS_SELLER = """
 - seller_list_products: no params (lists all your products)
-- inventory_search: stock_filter (in_stock/low_stock/out_of_stock), min_rating, min_sold, max_sold, min_price, max_price, category, sort_by (stock_asc/stock_desc/rating_desc/sold_desc/price_asc/price_desc)
-- seller_create_product: name (required), price (required, USD float), stock (required, integer), description (optional), category (Fruits/Vegetables/Dairy/Meat/Beverages/Bakery/Snacks/Grains/Frozen/Other, optional), image_url (always null — do not ask user)
+- inventory_search: stock_filter (in_stock/low_stock/out_of_stock), min_rating, min_sold, max_sold, min_price, max_price, category (partial match e.g. "Fruits"), query (name keyword e.g. "apple" to find all apple products), sort_by (stock_asc/stock_desc/rating_desc/sold_desc/price_asc/price_desc)
+- seller_create_product: name (required), price (required, USD float), stock (required, integer), description (optional), category (Produce/Dairy & Eggs/Beverages/Pantry/Meat & Seafood, optional), image_url (always null — do not ask user)
 - seller_update_product: product_id (UUID, required), name, description, category, price, stock — any combination
 - seller_update_stock: product_id (UUID), delta (positive to add, negative to reduce)
 - seller_delete_product: product_id (UUID) — single product deactivate

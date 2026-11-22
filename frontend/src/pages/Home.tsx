@@ -13,7 +13,7 @@ export const Home: React.FC = () => {
     const fetchFeatured = async () => {
       try {
         const data = await productService.list(undefined, true);
-        setFeaturedProducts(data.items);
+        setFeaturedProducts(data?.items ?? []);
       } catch (e) {
         console.error(e);
       } finally {

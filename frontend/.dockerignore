@@ -16,7 +16,6 @@ dist/
 eslint.config.js
 .oxlintrc.json
 prettier.config.js
-postcss.config.js
 
 # TS build configs (vite handles compilation)
 tsconfig*.json

@@ -1,20 +1,20 @@
 import logging
 import uuid
 
-from neo4j import Driver, GraphDatabase
+from neo4j import AsyncDriver, AsyncGraphDatabase
 
 from app.core.config import settings
 
 logger = logging.getLogger("app.services.rag.graph")
 
-_neo4j_driver: Driver | None = None
+_neo4j_driver: AsyncDriver | None = None
 
 
-def get_neo4j_driver() -> Driver:
+def get_neo4j_driver() -> AsyncDriver:
     global _neo4j_driver
     if _neo4j_driver is None:
         logger.info(f"Connecting to Neo4j at {settings.NEO4J_URI}...")
-        _neo4j_driver = GraphDatabase.driver(
+        _neo4j_driver = AsyncGraphDatabase.driver(
             settings.NEO4J_URI,
             auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
         )
@@ -28,7 +28,7 @@ def close_neo4j_driver() -> None:
         _neo4j_driver = None
 
 
-def seed_store_layout() -> None:
+async def seed_store_layout() -> None:
     driver = get_neo4j_driver()
 
     # 2-3 Sections
@@ -48,13 +48,13 @@ def seed_store_layout() -> None:
         {"name": "Aisle 6 (Cold Drinks)", "section": "Dairy & Beverages"},
     ]
 
-    with driver.session() as session:
+    async with driver.session() as session:
         # Clear database to start clean
-        session.run("MATCH (n) DETACH DELETE n")
+        await session.run("MATCH (n) DETACH DELETE n")
 
         # Create Sections
         for s in sections:
-            session.run(
+            await session.run(
                 "MERGE (sec:Section {name: $name}) SET sec.description = $desc",
                 name=s["name"],
                 desc=s["desc"],
@@ -62,7 +62,7 @@ def seed_store_layout() -> None:
 
         # Create Aisles and link to Sections
         for a in aisles:
-            session.run(
+            await session.run(
                 """
                 MERGE (aisle:Aisle {name: $name})
                 WITH aisle
@@ -121,12 +121,12 @@ def determine_aisle_for_category(category: str) -> str:
     return "Aisle 3 (Canned Goods)"  # Default fallback
 
 
-def link_product_to_aisle(product_id: uuid.UUID, name: str, category: str) -> None:
+async def link_product_to_aisle(product_id: uuid.UUID, name: str, category: str) -> None:
     driver = get_neo4j_driver()
     aisle_name = determine_aisle_for_category(category)
 
-    with driver.session() as session:
-        session.run(
+    async with driver.session() as session:
+        await session.run(
             """
             MERGE (p:Product {id: $product_id})
             SET p.name = $name, p.category = $category
@@ -142,7 +142,7 @@ def link_product_to_aisle(product_id: uuid.UUID, name: str, category: str) -> No
     logger.info(f"Linked product {product_id} to {aisle_name} in Neo4j.")
 
 
-def get_adjacent_products(product_id: uuid.UUID) -> list[dict[str, str]]:
+async def get_adjacent_products(product_id: uuid.UUID) -> list[dict[str, str]]:
     driver = get_neo4j_driver()
     pid_str = str(product_id)
 
@@ -153,9 +153,9 @@ def get_adjacent_products(product_id: uuid.UUID) -> list[dict[str, str]]:
         RETURN other.id AS id, other.name AS name LIMIT 5
     """
 
-    with driver.session() as session:
-        result = session.run(query_aisle, product_id=pid_str)
-        products = [{"id": record["id"], "name": record["name"]} for record in result]
+    async with driver.session() as session:
+        result = await session.run(query_aisle, product_id=pid_str)
+        products = [{"id": record["id"], "name": record["name"]} async for record in result]
         if products:
             return products
 
@@ -166,5 +166,5 @@ def get_adjacent_products(product_id: uuid.UUID) -> list[dict[str, str]]:
             WHERE other.id <> $product_id
             RETURN other.id AS id, other.name AS name LIMIT 5
         """
-        result = session.run(query_section, product_id=pid_str)
-        return [{"id": record["id"], "name": record["name"]} for record in result]
+        result = await session.run(query_section, product_id=pid_str)
+        return [{"id": record["id"], "name": record["name"]} async for record in result]

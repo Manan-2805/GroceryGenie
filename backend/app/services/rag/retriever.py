@@ -117,6 +117,62 @@ async def index_product_in_qdrant(
         logger.error(f"Failed to index product {product_id} in Qdrant: {e}")
 
 
+# Known category names in the database (for partial matching)
+_KNOWN_CATEGORIES = [
+    "Produce",
+    "Dairy & Eggs",
+    "Beverages",
+    "Pantry",
+    "Meat & Seafood",
+    "Fruits",
+    "Vegetables",
+    "Meat",
+    "Bakery",
+    "Snacks",
+    "Grains",
+    "Frozen",
+    "Other",
+]
+
+
+def _normalize_category(category: str) -> str | None:
+    """Try to match a user/LLM-provided category to a known category name.
+    
+    First tries exact match, then case-insensitive match, then substring match.
+    Returns the canonical category name, or None if no match found.
+    """
+    cat = category.strip()
+    if not cat:
+        return None
+    
+    # Exact match
+    if cat in _KNOWN_CATEGORIES:
+        return cat
+    
+    # Case-insensitive match
+    cat_lower = cat.lower()
+    for known in _KNOWN_CATEGORIES:
+        if known.lower() == cat_lower:
+            return known
+    
+    # Substring match: known contains cat OR cat contains known
+    for known in _KNOWN_CATEGORIES:
+        known_lower = known.lower()
+        if cat_lower in known_lower or known_lower in cat_lower:
+            logger.info(f"Category fuzzy match: '{cat}' -> '{known}'")
+            return known
+    
+    # Word-level match: any word in cat matches any word in known
+    cat_words = set(cat_lower.split())
+    for known in _KNOWN_CATEGORIES:
+        known_words = set(known.lower().split())
+        if cat_words & known_words:  # intersection
+            logger.info(f"Category word match: '{cat}' -> '{known}'")
+            return known
+    
+    return cat  # Return as-is if no match found
+
+
 async def hybrid_search_products(
     db: AsyncSession,
     query_text: str,
@@ -125,6 +181,9 @@ async def hybrid_search_products(
     max_price: float | None = None,
     limit: int = 10,
 ) -> list[Product]:
+    # Normalize category to handle partial/alternate names
+    normalized_category = _normalize_category(category) if category else None
+
     # 1. Vector Search from Qdrant
     vector_hits = []
     try:
@@ -138,10 +197,10 @@ async def hybrid_search_products(
             )
         ]
 
-        if category:
+        if normalized_category:
             must_filters.append(
                 qmodels.FieldCondition(
-                    key="category", match=qmodels.MatchValue(value=category)
+                    key="category", match=qmodels.MatchValue(value=normalized_category)
                 )
             )
 
@@ -176,8 +235,9 @@ async def hybrid_search_products(
     words = [w.strip() for w in query_text.split() if len(w.strip()) > 1]
     db_query = select(Product).where(Product.is_active)
 
-    if category:
-        db_query = db_query.where(Product.category == category)
+    if normalized_category:
+        # Use ILIKE for category too, so partial matches work
+        db_query = db_query.where(Product.category.ilike(f"%{normalized_category}%"))
     if min_price is not None:
         db_query = db_query.where(Product.price >= min_price)
     if max_price is not None:

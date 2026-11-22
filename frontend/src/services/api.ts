@@ -27,6 +27,9 @@ const isApiResponse = <T>(payload: ApiResponse<T> | T): payload is ApiResponse<T
 };
 
 const extractApiData = <T>(payload: ApiResponse<T> | T): T => {
+  if (typeof payload === 'string' || payload === null || payload === undefined) {
+    return null as unknown as T;
+  }
   return isApiResponse(payload) ? payload.data : payload;
 };
 

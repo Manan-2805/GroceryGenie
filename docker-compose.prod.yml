@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Production deployment for app services only.
 # Run infrastructure first: docker compose -f docker-compose.infra.yml up -d
 # Then run: docker compose -f docker-compose.prod.yml up --build -d
@@ -13,7 +11,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./models:/app/models
+      - ./backend/models:/app/models
       - ./uploads:/app/uploads
     env_file:
       - .env.prod
@@ -29,6 +27,7 @@ services:
     container_name: grocergenie-frontend-prod
     ports:
       - "80:80"
+      - "5173:5173"
     env_file:
       - .env.prod
     networks:

@@ -159,9 +159,7 @@ oauth.register(
 
 @router.get("/google/login")
 async def google_login(request: Request) -> Any:
-    host = request.headers.get("host", "localhost:8000")
-    proto = "https" if request.headers.get("x-forwarded-proto") == "https" else "http"
-    redirect_uri = f"{proto}://{host}/api/v1/auth/google/callback"
+    redirect_uri = settings.GOOGLE_REDIRECT_URI
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 

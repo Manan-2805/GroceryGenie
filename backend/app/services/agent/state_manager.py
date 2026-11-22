@@ -309,6 +309,7 @@ async def resume(
 
         tool_name: str = data.get("tool", "")
         partial: dict[str, Any] = data.get("partial", {})
+        retry_count: int = data.get("retry_count", 0)
 
         # Merge new user message into existing partial params
         merged = await sv_merge(tool_name, partial, user_message)
@@ -316,7 +317,24 @@ async def resume(
         # Re-validate
         is_complete, missing, ask_text = sv_validate(tool_name, merged)
         if not is_complete:
-            # Still missing fields — update partial in Redis
+            # Check for max retries to prevent infinite loop
+            MAX_SLOT_FILL_RETRIES = 3
+            if retry_count >= MAX_SLOT_FILL_RETRIES:
+                await clear_pending(str(orchestrator.session_id))
+                logger.warning(
+                    f"[StateManager] Slot-fill for '{tool_name}' exceeded {MAX_SLOT_FILL_RETRIES} retries. "
+                    f"Clearing pending state for session {orchestrator.session_id}."
+                )
+                return {
+                    "type": "response",
+                    "text": (
+                        "I'm having trouble understanding the details I need. "
+                        "Please try again with a clearer description, or type 'cancel' to start over."
+                    ),
+                    "options": None,
+                }
+
+            # Still missing fields — update partial in Redis with incremented retry count
             await set_pending(
                 str(orchestrator.session_id),
                 "slot_fill",
@@ -324,6 +342,7 @@ async def resume(
                     "tool": tool_name,
                     "partial": merged,
                     "original_message": data.get("original_message", user_message),
+                    "retry_count": retry_count + 1,
                 },
             )
             return {"type": "response", "text": ask_text, "options": None}
