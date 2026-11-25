@@ -1,62 +1,33 @@
 import asyncio
 import logging
 from decimal import Decimal
+from uuid import NAMESPACE_URL, uuid5
 
-from sqlalchemy import delete
+from sqlalchemy.dialects.postgresql import insert
 
 from app.db.base import AsyncSessionFactory
 from app.db.models.enums import UserRole
 from app.db.models.product import Product
 from app.db.models.user import User
-from app.services.rag.graph import (
-    link_product_to_aisle,
-    seed_store_layout,
-)
-from app.services.rag.retriever import (
-    COLLECTION_NAME,
-    get_qdrant_client,
-    index_product_in_qdrant,
-)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app.db.seed")
 
 
 async def seed_data() -> None:
-    logger.info("Connecting to Postgres database...")
-    async with AsyncSessionFactory() as db:
-        # Wipe all users and products to start clean
-        logger.info("Cleaning up old database data...")
-        await db.execute(delete(Product))
-        await db.execute(delete(User))
-        await db.commit()
-
-        # Wipe and recreate Qdrant collection to start clean
-        logger.info("Resetting Qdrant collection...")
-        try:
-            client = get_qdrant_client()
-            client.delete_collection(collection_name=COLLECTION_NAME)
-            logger.info("Deleted Qdrant collection.")
-            # Force recreate collection
-            from app.services.rag import retriever
-
-            retriever._qdrant_client = None
-            get_qdrant_client()
-            logger.info("Recreated Qdrant collection.")
-        except Exception as e:
-            logger.error(f"Error resetting Qdrant collection: {e}")
-
-        # 1. Seed only one dev user (role: customer by default, switchable to seller)
-        logger.info("Seeding dev user...")
-        dev_user = User(
-            google_sub="mock_dev_sub",
-            email="dev@GroceryGenie.com",
-            name="Dev User",
-            role=UserRole.customer,
+    seller_id = uuid5(NAMESPACE_URL, "grocergenie:demo-shop")
+    async with AsyncSessionFactory.begin() as db:
+        await db.execute(
+            insert(User)
+            .values(
+                id=seller_id,
+                google_sub="demo:grocergenie:shop",
+                email="demo-shop@example.invalid",
+                name="GroceryGenie Demo Shop",
+                role=UserRole.seller,
+            )
+            .on_conflict_do_nothing(index_elements=[User.id])
         )
-        db.add(dev_user)
-        await db.commit()
-        await db.refresh(dev_user)
 
         # 2. Seed products with variety to enable comparison tasks
         products_data = [
@@ -251,65 +222,23 @@ async def seed_data() -> None:
             },
         ]
 
-        seeded_products = []
-        for p in products_data:
-            product = Product(
-                seller_id=dev_user.id,
-                name=p["name"],
-                description=p["description"],
-                category=p["category"],
-                price=p["price"],
-                stock=p["stock"],
-                image_url=p["image_url"],
-                avg_rating=Decimal("0.00"),  # No fake ratings - starts at 0
-                sold_count=0,
-                is_active=True,
+        await db.execute(
+            insert(Product)
+            .values(
+                [
+                    {
+                        "id": uuid5(
+                            NAMESPACE_URL, f"grocergenie:demo-product:{product['name']}"
+                        ),
+                        "seller_id": seller_id,
+                        **product,
+                    }
+                    for product in products_data
+                ]
             )
-            db.add(product)
-            seeded_products.append(product)
-
-        await db.commit()
-
-        # Update Qdrant and Neo4j layout
-        logger.info("Initializing vector search and knowledge graph clients...")
-        await seed_store_layout()
-
-        logger.info("Indexing products in Qdrant and Neo4j...")
-        neo4j_failures = 0
-        qdrant_failures = 0
-        for product in seeded_products:
-            await db.refresh(product)
-
-            try:
-                await index_product_in_qdrant(
-                    product_id=product.id,
-                    name=product.name,
-                    description=product.description,
-                    category=product.category,
-                    price=float(product.price),
-                    is_active=product.is_active,
-                )
-            except Exception as e:
-                logger.error(f"Failed to index product {product.id} in Qdrant: {e}")
-                qdrant_failures += 1
-
-            try:
-                await link_product_to_aisle(
-                    product_id=product.id,
-                    name=product.name,
-                    category=product.category,
-                )
-            except Exception as e:
-                logger.error(f"Failed to link product {product.id} in Neo4j: {e}")
-                neo4j_failures += 1
-
-            logger.info(f"Indexed & Linked product: {product.name}")
-
-        logger.info(
-            f"Seeding complete. {len(seeded_products)} products indexed (Qdrant fails: {qdrant_failures}, "
-            f"Neo4j fails: {neo4j_failures}). "
-            "Single Dev User: dev@GroceryGenie.com (bypass login)"
+            .on_conflict_do_nothing(index_elements=[Product.id])
         )
+        logger.info("Ensured %d synthetic products exist.", len(products_data))
 
 
 if __name__ == "__main__":

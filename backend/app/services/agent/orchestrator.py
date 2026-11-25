@@ -148,6 +148,7 @@ class AgentOrchestrator:
             try:
                 from app.services.agent.state_manager import _options_key
                 from app.services.memory import get_redis_client
+
                 await get_redis_client().delete(_options_key(sid))
             except Exception:
                 pass
@@ -266,6 +267,7 @@ class AgentOrchestrator:
             try:
                 from app.services.agent.state_manager import _options_key
                 from app.services.memory import get_redis_client
+
                 await get_redis_client().delete(_options_key(sid))
             except Exception:
                 pass
@@ -362,6 +364,19 @@ class AgentOrchestrator:
 
     async def _execute_tool(self, tool_name: str, params: dict[str, Any]) -> Any:
         """Execute a registered tool. Returns error dict on failure."""
+        if tool_name not in {
+            "search_products",
+            "compare_products",
+            "view_cart",
+            "view_orders",
+            "get_order_detail",
+            "inventory_search",
+            "seller_list_products",
+        }:
+            return {
+                "success": False,
+                "message": "This action requires a confirmed preview.",
+            }
         tool_params = dict(params)
         tool_params["db"] = self.db
         tool_params["user_id"] = self.user_id

@@ -1,6 +1,10 @@
-import logging
+from __future__ import annotations
 
-from sentence_transformers import SentenceTransformer
+import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 from app.core.config import settings
 
@@ -12,6 +16,8 @@ _model: SentenceTransformer | None = None
 def get_embedder() -> SentenceTransformer:
     global _model
     if _model is None:
+        from sentence_transformers import SentenceTransformer
+
         from app.core.config import MODELS_DIR
 
         local_path = MODELS_DIR / "BAAI" / "bge-small-en-v1.5"
@@ -32,6 +38,4 @@ def embed_text(text: str) -> list[float]:
     model = get_embedder()
     embedding = model.encode(text)
     # Ensure it returns a list of floats
-    if hasattr(embedding, "tolist"):
-        return embedding.tolist()
-    return list(embedding)
+    return [float(value) for value in embedding]

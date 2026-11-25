@@ -1,220 +1,141 @@
-from typing import Any
+from typing import cast
 
 from authlib.integrations.starlette_client import OAuth
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from sqlalchemy import delete
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from starlette.requests import Request
 
 from app.core.config import settings
-from app.core.dependencies import get_current_user, get_db
-from app.core.security import create_access_token
+from app.core.dependencies import get_current_user, get_db, require_same_origin
+from app.core.security import (
+    SESSION_COOKIE,
+    SESSION_LIFETIME,
+    create_login_session,
+    session_hash,
+)
+from app.db.base import utc_now
 from app.db.models.enums import UserRole
+from app.db.models.login_session import LoginSession
 from app.db.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
-
-
-class UserMeResponse(BaseModel):
-    id: str
-    email: str
-    name: str
-    role: str
-
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
-
-class RegisterRequest(BaseModel):
-    email: str
-    password: str
-    name: str
-    role: UserRole
-
-
-@router.get("/me", response_model=UserMeResponse)
-async def get_me(request_user: User = Depends(get_current_user)) -> UserMeResponse:
-    return UserMeResponse(
-        id=str(request_user.id),
-        email=request_user.email,
-        name=request_user.name,
-        role=request_user.role.value,
-    )
-
-
-@router.post("/login")
-async def login(
-    payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)
-) -> dict[str, str]:
-    if settings.ENV_MODE != "development":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Email/Password authentication is only available in development mode.",
-        )
-
-    result = await db.execute(select(User).where(User.email == payload.email))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        result = await db.execute(
-            select(User).where(User.google_sub == f"local_{payload.email}")
-        )
-        user = result.scalar_one_or_none()
-
-    # Backwards-compatibility for seeded users
-    if not user:
-        if payload.email == "test_seller@GroceryGenie.com":
-            result = await db.execute(
-                select(User).where(User.google_sub == "mock_seller_sub")
-            )
-            user = result.scalar_one_or_none()
-        elif payload.email == "test_customer@GroceryGenie.com":
-            result = await db.execute(
-                select(User).where(User.google_sub == "mock_customer_sub")
-            )
-            user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password.",
-        )
-
-    access_token = create_access_token(data={"sub": user.google_sub})
-    response.set_cookie(
-        key="session_token",
-        value=access_token,
-        httponly=True,
-        max_age=3600 * 24 * 7,
-        expires=3600 * 24 * 7,
-        samesite="strict",
-        secure=settings.ENV_MODE == "production",
-    )
-
-    return {"status": "success", "role": user.role.value, "name": user.name}
-
-
-@router.post("/dev-bypass")
-async def dev_bypass(
-    response: Response, db: AsyncSession = Depends(get_db)
-) -> dict[str, str]:
-    if settings.ENV_MODE != "development":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Dev bypass is only available in development mode.",
-        )
-
-    result = await db.execute(select(User).where(User.email == "dev@GroceryGenie.com"))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Dev user not seeded in database.",
-        )
-
-    access_token = create_access_token(data={"sub": user.google_sub})
-    response.set_cookie(
-        key="session_token",
-        value=access_token,
-        httponly=True,
-        max_age=3600 * 24 * 7,
-        expires=3600 * 24 * 7,
-        samesite="strict",
-        secure=settings.ENV_MODE == "production",
-    )
-
-    return {"status": "success", "role": user.role.value, "name": user.name}
-
-
-@router.post("/logout")
-async def logout(response: Response) -> dict[str, str]:
-    response.set_cookie(
-        key="session_token",
-        value="",
-        httponly=True,
-        max_age=0,
-        expires=0,
-        samesite="strict",
-        secure=settings.ENV_MODE == "production",
-    )
-    return {"status": "success"}
-
-
-# Google OAuth Client Setup
-
 oauth = OAuth()
 oauth.register(
     name="google",
     client_id=settings.GOOGLE_CLIENT_ID,
     client_secret=settings.GOOGLE_CLIENT_SECRET,
     server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-    client_kwargs={"scope": "openid email profile"},
+    client_kwargs={"scope": "openid email profile", "code_challenge_method": "S256"},
 )
 
 
+class UserMeResponse(BaseModel):
+    id: str
+    email: str
+    name: str
+    role: UserRole
+
+
+class GoogleIdentity(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    sub: str = Field(min_length=1, max_length=255)
+    email: str = Field(min_length=3, max_length=255)
+    email_verified: bool
+    name: str = Field(default="", max_length=255)
+
+    @field_validator("email_verified")
+    @classmethod
+    def check_verified(cls, verified: bool) -> bool:
+        if not verified:
+            raise ValueError("Google account must have a verified email")
+        return verified
+
+
+@router.get("/me", response_model=UserMeResponse)
+async def get_me(user: User = Depends(get_current_user)) -> UserMeResponse:
+    return UserMeResponse(
+        id=str(user.id), email=user.email, name=user.name, role=user.role
+    )
+
+
+@router.post("/logout", dependencies=[Depends(require_same_origin)])
+async def logout(
+    request: Request, response: Response, db: AsyncSession = Depends(get_db)
+) -> dict[str, str]:
+    token = request.cookies.get(SESSION_COOKIE)
+    if token and len(token) == 43:
+        await db.execute(
+            delete(LoginSession).where(LoginSession.token_hash == session_hash(token))
+        )
+        await db.commit()
+    response.delete_cookie(
+        SESSION_COOKIE,
+        httponly=True,
+        samesite="strict",
+        secure=settings.secure_cookies,
+    )
+    return {"status": "success"}
+
+
 @router.get("/google/login")
-async def google_login(request: Request) -> Any:
-    redirect_uri = settings.GOOGLE_REDIRECT_URI
-    return await oauth.google.authorize_redirect(request, redirect_uri)
+async def google_login(request: Request) -> RedirectResponse:
+    if not settings.GOOGLE_CLIENT_ID or not settings.GOOGLE_CLIENT_SECRET:
+        raise HTTPException(503, "Google sign-in is not configured.")
+    client = oauth.create_client("google")
+    return cast(
+        RedirectResponse,
+        await client.authorize_redirect(request, settings.GOOGLE_REDIRECT_URI),
+    )
 
 
 @router.get("/google/callback")
 async def google_callback(
     request: Request, db: AsyncSession = Depends(get_db)
 ) -> RedirectResponse:
+    client = oauth.create_client("google")
     try:
-        token = await oauth.google.authorize_access_token(request)
+        # Authlib verifies state, nonce, signature, audience and issuer when
+        # exchanging the authorization code for the OpenID Connect identity.
+        token = await client.authorize_access_token(request)
+        identity = GoogleIdentity.model_validate(token.get("userinfo"))
+    except ValidationError:
+        return RedirectResponse("/login?error=unverified_identity")
     except Exception:
-        return RedirectResponse(url=f"{settings.FRONTEND_URL}/login?error=oauth_failed")
+        return RedirectResponse("/login?error=oauth_failed")
 
-    user_info = token.get("userinfo")
-    if not user_info:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to retrieve Google user info.",
-        )
-
-    email = user_info.get("email")
-    name = user_info.get("name", "")
-    google_sub = user_info.get("sub")
-
-    # Check if user exists
-    result = await db.execute(select(User).where(User.google_sub == google_sub))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        # Default new google logins as customer unless email contains 'seller'
-        role = UserRole.customer
-        if email and "seller" in email.lower():
-            role = UserRole.seller
-
-        user = User(
-            google_sub=google_sub,
-            email=email,
-            name=name,
-            role=role,
-        )
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-
-    # Generate JWT
-    access_token = create_access_token(data={"sub": user.google_sub})
-
-    # Redirect to frontend and set httpOnly cookie
-    redirect_res = RedirectResponse(url=settings.FRONTEND_URL)
-    redirect_res.set_cookie(
-        key="session_token",
-        value=access_token,
-        httponly=True,
-        max_age=3600 * 24 * 7,  # 7 days
-        expires=3600 * 24 * 7,
-        samesite="strict",
-        secure=settings.ENV_MODE == "production",
+    name = identity.name or identity.email.split("@", 1)[0]
+    user_insert = insert(User).values(
+        google_sub=identity.sub, email=identity.email, name=name, role=UserRole.customer
     )
-    return redirect_res
+    user = (
+        await db.scalars(
+            user_insert.on_conflict_do_update(
+                index_elements=[User.google_sub],
+                set_={"email": identity.email, "name": name, "updated_at": utc_now()},
+            ).returning(User)
+        )
+    ).one()
+    old_token = request.cookies.get(SESSION_COOKIE)
+    if old_token and len(old_token) == 43:
+        await db.execute(
+            delete(LoginSession).where(
+                LoginSession.token_hash == session_hash(old_token)
+            )
+        )
+    session_token = create_login_session(db, user)
+    await db.commit()
+
+    response = RedirectResponse("/")
+    response.set_cookie(
+        SESSION_COOKIE,
+        session_token,
+        max_age=int(SESSION_LIFETIME.total_seconds()),
+        httponly=True,
+        samesite="strict",
+        secure=settings.secure_cookies,
+    )
+    return response

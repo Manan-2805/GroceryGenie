@@ -115,7 +115,9 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = Field(default="placeholder_client_id")
     GOOGLE_CLIENT_SECRET: str = Field(default="placeholder_client_secret")
     FRONTEND_URL: str = Field(default="http://localhost:5173")
-    GOOGLE_REDIRECT_URI: str = Field(default="http://localhost:5173/api/v1/auth/google/callback")
+    GOOGLE_REDIRECT_URI: str = Field(
+        default="http://localhost:5173/api/v1/auth/google/callback"
+    )
     ALLOWED_ORIGINS: str = Field(default="http://localhost:5173,http://localhost:8000")
 
     # JWT Auth config
@@ -176,6 +178,10 @@ class Settings(BaseSettings):
             except json.JSONDecodeError as e:
                 raise ValueError(f"LLM_PROVIDERS is not valid JSON: {e}") from e
         return v
+
+    @property
+    def secure_cookies(self) -> bool:
+        return self.ENV_MODE == "production" or self.FRONTEND_URL.startswith("https://")
 
     @property
     def parsed_origins(self) -> list[str]:

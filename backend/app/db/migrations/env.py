@@ -5,15 +5,14 @@ from alembic import context
 from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# Import configuration and models
+import app.db.models  # noqa: F401
 from app.core.config import settings
 from app.db.base import Base
-from app.db.models import *  # noqa: F403
 
 config = context.config
 
 # Dynamically set the database URL from settings
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

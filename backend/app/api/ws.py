@@ -42,11 +42,11 @@ from fastapi.websockets import WebSocketState
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select as sql_select
 
+from app.core.config import settings
 from app.core.dependencies import get_db
-from app.core.security import decode_access_token
+from app.core.security import SESSION_COOKIE, authenticated_user
 from app.db.models.enums import ChatMode
 from app.db.models.session import ChatSession
-from app.db.models.user import User
 from app.services.agent.llm import call_llm_stream
 from app.services.agent.orchestrator import AgentOrchestrator
 from app.services.agent.prompts import VOICE_PROSE_PROMPT
@@ -434,41 +434,31 @@ async def voice_websocket_endpoint(
     websocket: WebSocket,
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    await websocket.accept()
-    logger.info("Voice WebSocket connected.")
-
-    # ── Auth ──────────────────────────────────────────────────────────────
-    token = websocket.cookies.get("session_token") or websocket.query_params.get(
-        "token"
-    )
-    if not token:
-        await websocket.close(
-            code=status.WS_1008_POLICY_VIOLATION, reason="Missing token"
-        )
+    if websocket.headers.get("origin") not in settings.parsed_origins:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
-
-    payload = decode_access_token(token)
-    if not payload or "sub" not in payload:
-        await websocket.close(
-            code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token"
-        )
+    token = websocket.cookies.get(SESSION_COOKIE)
+    user = await authenticated_user(db, token)
+    if user is None:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
-
-    user_result = await db.execute(
-        sql_select(User).where(User.google_sub == payload["sub"])
-    )
-    user = user_result.scalar_one_or_none()
-    if not user:
-        await websocket.close(
-            code=status.WS_1008_POLICY_VIOLATION, reason="User not found"
-        )
-        return
+    user_id, mode_version = user.id, user.mode_version
 
     # ── Session ───────────────────────────────────────────────────────────
     session_id_str = websocket.query_params.get("session_id")
     if session_id_str:
         try:
             session_id = uuid.UUID(session_id_str)
+            if (
+                await db.scalar(
+                    sql_select(ChatSession.id).where(
+                        ChatSession.id == session_id, ChatSession.user_id == user_id
+                    )
+                )
+                is None
+            ):
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
         except ValueError:
             await websocket.close(
                 code=status.WS_1008_POLICY_VIOLATION, reason="Invalid Session ID"
@@ -487,6 +477,9 @@ async def voice_websocket_endpoint(
         session_id=session_id,
         user_role=user.role,
     )
+
+    await db.commit()
+    await websocket.accept()
 
     # ── Connection-scoped state ───────────────────────────────────────────
     audio_buffer = bytearray()
@@ -572,6 +565,11 @@ async def voice_websocket_endpoint(
             frame = await asyncio.wait_for(
                 websocket.receive(), timeout=HEARTBEAT_INTERVAL + 5
             )
+            current_user = await authenticated_user(db, token)
+            if current_user is None or current_user.mode_version != mode_version:
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                break
+            await db.commit()
 
             # ── Binary: PCM audio chunks ──────────────────────────────────
             if "bytes" in frame:
@@ -649,18 +647,14 @@ async def voice_websocket_endpoint(
                     continue
 
                 if msg_type == "permission_response":
-                    approved = data.get("approved")
-                    action_val = data.get("action")
-                    payload_val = data.get("payload")
-                    if approved and action_val and payload_val:
-                        res = await orchestrator.execute_approved_mutation(
-                            action_val, payload_val
-                        )
-                        is_playing_response = True
-                        await handle_orchestrator_result(
-                            res, websocket, voice_output_queue, seq_counter, cancel_flag
-                        )
-                        await voice_output_queue.put(b"EOF")
+                    await safe_send_json(
+                        websocket,
+                        {
+                            "type": "response",
+                            "text": "Legacy approvals are unavailable.",
+                        },
+                    )
+                    continue
 
                 if msg_type in ("option_response", "free_input"):
                     text_input = (
@@ -716,7 +710,9 @@ async def voice_websocket_endpoint(
         # Record session end time
         try:
             sess_res = await db.execute(
-                sql_select(ChatSession).where(ChatSession.id == session_id)
+                sql_select(ChatSession).where(
+                    ChatSession.id == session_id, ChatSession.user_id == user_id
+                )
             )
             sess_obj = sess_res.scalar_one_or_none()
             if sess_obj:

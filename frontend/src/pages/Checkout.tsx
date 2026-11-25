@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { CustomDialog } from '../components/CustomDialog';
-import { orderService, addressService, Address } from '../services/api';
+import { orderService, addressService, Address, CheckoutQuote } from '../services/api';
 
 export const Checkout: React.FC = () => {
   const navigate = useNavigate();
@@ -19,11 +19,13 @@ export const Checkout: React.FC = () => {
     city: '',
     state: '',
     postal_code: '',
-    country: 'Ireland',
+    country: 'India',
     label: 'Home',
   });
 
   const [placing, setPlacing] = useState(false);
+  const [review, setReview] = useState<{ quote: CheckoutQuote; key: string } | null>(null);
+  const formatMoney = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' });
 
   // Custom Dialog States
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -105,14 +107,32 @@ export const Checkout: React.FC = () => {
 
     setPlacing(true);
     try {
-      // The backend place_order endpoint expects PlaceOrderPayload which is { delivery_address: dict }
-      const order = await orderService.place(finalAddressPayload);
-      showDialog('Success', `Order placed successfully! Order ID: ${order.id}`, () => {
+      const payload =
+        useNewAddress || selectedAddressId === null
+          ? { delivery_address: finalAddressPayload }
+          : { address_id: selectedAddressId };
+      setReview({ quote: await orderService.quote(payload), key: window.crypto.randomUUID() });
+    } catch {
+      showDialog('Checkout unavailable', 'Check your cart and delivery address, then try again.');
+    } finally {
+      setPlacing(false);
+    }
+  };
+
+  const placeReviewedOrder = async () => {
+    if (review === null || placing) return;
+    setPlacing(true);
+    try {
+      const order = await orderService.place(review.quote.id, review.key);
+      setReview(null);
+      showDialog('Order placed', `Simulated payment complete. Order ID: ${order.id}`, () => {
         void navigate('/orders');
       });
-    } catch (err) {
-      console.error(err);
-      showDialog('Error', 'Failed to place order. Make sure your cart is not empty.');
+    } catch {
+      showDialog(
+        'Could not complete checkout',
+        'Retry this payment or return to your cart to review a new quote.'
+      );
     } finally {
       setPlacing(false);
     }
@@ -145,205 +165,236 @@ export const Checkout: React.FC = () => {
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="glass-card p-6 space-y-6">
-        <h3 className="font-bold text-lg text-gray-800 dark:text-gray-200 flex items-center gap-2 border-b pb-3 dark:border-gray-900">
-          <ShieldCheck className="text-accent" />
-          <span>Delivery Details</span>
-        </h3>
+      {review === null && (
+        <form onSubmit={handleSubmit} className="glass-card p-6 space-y-6">
+          <h3 className="font-bold text-lg text-gray-800 dark:text-gray-200 flex items-center gap-2 border-b pb-3 dark:border-gray-900">
+            <ShieldCheck className="text-accent" />
+            <span>Delivery Details</span>
+          </h3>
 
-        {/* Saved Addresses Section */}
-        {savedAddresses.length > 0 && (
-          <div className="space-y-3">
-            <label className="text-xs font-bold text-gray-500 uppercase">
-              Select Delivery Address
-            </label>
-            <div className="grid grid-cols-1 gap-3">
-              {savedAddresses.map((addr) => {
-                const isSelected = !useNewAddress && selectedAddressId === addr.id;
-                return (
-                  <div
-                    key={addr.id}
+          {/* Saved Addresses Section */}
+          {savedAddresses.length > 0 && (
+            <div className="space-y-3">
+              <label className="text-xs font-bold text-gray-500 uppercase">
+                Select Delivery Address
+              </label>
+              <div className="grid grid-cols-1 gap-3">
+                {savedAddresses.map((addr) => {
+                  const isSelected = !useNewAddress && selectedAddressId === addr.id;
+                  return (
+                    <div
+                      key={addr.id}
+                      onClick={() => {
+                        setUseNewAddress(false);
+                        setSelectedAddressId(addr.id);
+                      }}
+                      className={`p-4 border rounded-xl cursor-pointer transition flex items-start gap-3 bg-white dark:bg-gray-950 ${
+                        isSelected
+                          ? 'border-accent ring-1 ring-accent'
+                          : 'border-gray-200 dark:border-gray-800 hover:bg-gray-50/50 dark:hover:bg-gray-900/20'
+                      }`}
+                    >
+                      <div className="mt-0.5 text-accent">
+                        {typeof addr.label === 'string' && addr.label.toLowerCase() === 'work' ? (
+                          <Briefcase size={16} />
+                        ) : (
+                          <HomeIcon size={16} />
+                        )}
+                      </div>
+                      <div className="flex-1 text-xs">
+                        <p className="font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wide text-[9px] mb-1">
+                          {addr.label} {addr.is_default === true ? '(Default)' : ''}
+                        </p>
+                        <p className="font-medium text-gray-800 dark:text-gray-300">
+                          {addr.line1}{' '}
+                          {typeof addr.line2 === 'string' && addr.line2.trim().length > 0
+                            ? `, ${addr.line2}`
+                            : ''}
+                        </p>
+                        <p className="text-gray-400 mt-0.5">
+                          {addr.city}, {addr.state} - {addr.postal_code}, {addr.country}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setUseNewAddress(true)}
+                className={`flex items-center gap-1.5 text-xs font-bold transition mt-2 ${
+                  useNewAddress ? 'text-accent' : 'text-gray-500 hover:text-accent'
+                }`}
+              >
+                <PlusCircle size={16} />
+                <span>Deliver to a new address</span>
+              </button>
+            </div>
+          )}
+
+          {/* New Address Fields */}
+          {useNewAddress && (
+            <div className="space-y-4 pt-2 border-t dark:border-gray-900">
+              {savedAddresses.length > 0 && (
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-accent">New Delivery Address</span>
+                  <button
+                    type="button"
                     onClick={() => {
                       setUseNewAddress(false);
-                      setSelectedAddressId(addr.id);
-                    }}
-                    className={`p-4 border rounded-xl cursor-pointer transition flex items-start gap-3 bg-white dark:bg-gray-950 ${
-                      isSelected
-                        ? 'border-accent ring-1 ring-accent'
-                        : 'border-gray-200 dark:border-gray-800 hover:bg-gray-50/50 dark:hover:bg-gray-900/20'
-                    }`}
-                  >
-                    <div className="mt-0.5 text-accent">
-                      {typeof addr.label === 'string' && addr.label.toLowerCase() === 'work' ? (
-                        <Briefcase size={16} />
-                      ) : (
-                        <HomeIcon size={16} />
-                      )}
-                    </div>
-                    <div className="flex-1 text-xs">
-                      <p className="font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wide text-[9px] mb-1">
-                        {addr.label} {addr.is_default === true ? '(Default)' : ''}
-                      </p>
-                      <p className="font-medium text-gray-800 dark:text-gray-300">
-                        {addr.line1}{' '}
-                        {typeof addr.line2 === 'string' && addr.line2.trim().length > 0
-                          ? `, ${addr.line2}`
-                          : ''}
-                      </p>
-                      <p className="text-gray-400 mt-0.5">
-                        {addr.city}, {addr.state} - {addr.postal_code}, {addr.country}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setUseNewAddress(true)}
-              className={`flex items-center gap-1.5 text-xs font-bold transition mt-2 ${
-                useNewAddress ? 'text-accent' : 'text-gray-500 hover:text-accent'
-              }`}
-            >
-              <PlusCircle size={16} />
-              <span>Deliver to a new address</span>
-            </button>
-          </div>
-        )}
-
-        {/* New Address Fields */}
-        {useNewAddress && (
-          <div className="space-y-4 pt-2 border-t dark:border-gray-900">
-            {savedAddresses.length > 0 && (
-              <div className="flex justify-between items-center">
-                <span className="text-xs font-bold text-accent">New Delivery Address</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setUseNewAddress(false);
-                    if (savedAddresses.length > 0 && selectedAddressId === null) {
-                      const firstAddr = savedAddresses[0];
-                      if (firstAddr) {
-                        setSelectedAddressId(firstAddr.id);
+                      if (savedAddresses.length > 0 && selectedAddressId === null) {
+                        const firstAddr = savedAddresses[0];
+                        if (firstAddr) {
+                          setSelectedAddressId(firstAddr.id);
+                        }
                       }
-                    }
-                  }}
-                  className="text-xs font-bold text-gray-400 hover:text-gray-600"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
+                    }}
+                    className="text-xs font-bold text-gray-400 hover:text-gray-600"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
 
-            {/* Address Label */}
-            <div className="grid grid-cols-2 gap-4">
+              {/* Address Label */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase">
+                    Address Label
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newAddress.label}
+                    onChange={(e) => setNewAddress((a) => ({ ...a, label: e.target.value }))}
+                    placeholder="Home, Office, Work"
+                    className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase">Country</label>
+                  <input
+                    type="text"
+                    required
+                    value={newAddress.country}
+                    onChange={(e) => setNewAddress((a) => ({ ...a, country: e.target.value }))}
+                    placeholder="Ireland"
+                    className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Line 1 */}
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-gray-500 uppercase">
-                  Address Label
+                  Street Address
                 </label>
                 <input
                   type="text"
                   required
-                  value={newAddress.label}
-                  onChange={(e) => setNewAddress((a) => ({ ...a, label: e.target.value }))}
-                  placeholder="Home, Office, Work"
+                  value={newAddress.line1}
+                  onChange={(e) => setNewAddress((a) => ({ ...a, line1: e.target.value }))}
+                  placeholder="123 Main Street"
                   className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
                 />
               </div>
+
+              {/* Line 2 */}
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-gray-500 uppercase">Country</label>
+                <label className="text-[10px] font-bold text-gray-500 uppercase">
+                  Apt, Suite, Unit (Optional)
+                </label>
                 <input
                   type="text"
-                  required
-                  value={newAddress.country}
-                  onChange={(e) => setNewAddress((a) => ({ ...a, country: e.target.value }))}
-                  placeholder="Ireland"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
-                />
-              </div>
-            </div>
-
-            {/* Line 1 */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-gray-500 uppercase">
-                Street Address
-              </label>
-              <input
-                type="text"
-                required
-                value={newAddress.line1}
-                onChange={(e) => setNewAddress((a) => ({ ...a, line1: e.target.value }))}
-                placeholder="123 Main Street"
-                className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
-              />
-            </div>
-
-            {/* Line 2 */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-gray-500 uppercase">
-                Apt, Suite, Unit (Optional)
-              </label>
-              <input
-                type="text"
-                value={newAddress.line2}
-                onChange={(e) => setNewAddress((a) => ({ ...a, line2: e.target.value }))}
-                placeholder="Apt 4B"
-                className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
-              />
-            </div>
-
-            {/* City & State & Postal Code */}
-            <div className="grid grid-cols-3 gap-3">
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-gray-500 uppercase">City</label>
-                <input
-                  type="text"
-                  required
-                  value={newAddress.city}
-                  onChange={(e) => setNewAddress((a) => ({ ...a, city: e.target.value }))}
-                  placeholder="Dublin"
+                  value={newAddress.line2}
+                  onChange={(e) => setNewAddress((a) => ({ ...a, line2: e.target.value }))}
+                  placeholder="Apt 4B"
                   className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
                 />
               </div>
 
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-gray-500 uppercase">State</label>
-                <input
-                  type="text"
-                  required
-                  value={newAddress.state}
-                  onChange={(e) => setNewAddress((a) => ({ ...a, state: e.target.value }))}
-                  placeholder="Leinster"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
-                />
-              </div>
+              {/* City & State & Postal Code */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase">City</label>
+                  <input
+                    type="text"
+                    required
+                    value={newAddress.city}
+                    onChange={(e) => setNewAddress((a) => ({ ...a, city: e.target.value }))}
+                    placeholder="Pune"
+                    className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
+                  />
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-gray-500 uppercase">Postal Code</label>
-                <input
-                  type="text"
-                  required
-                  value={newAddress.postal_code}
-                  onChange={(e) => setNewAddress((a) => ({ ...a, postal_code: e.target.value }))}
-                  placeholder="D01 A234"
-                  className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
-                />
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase">State</label>
+                  <input
+                    type="text"
+                    required
+                    value={newAddress.state}
+                    onChange={(e) => setNewAddress((a) => ({ ...a, state: e.target.value }))}
+                    placeholder="Maharashtra"
+                    className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase">
+                    Postal Code
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newAddress.postal_code}
+                    onChange={(e) => setNewAddress((a) => ({ ...a, postal_code: e.target.value }))}
+                    placeholder="411001"
+                    className="w-full px-3 py-2 border dark:border-gray-800 bg-white dark:bg-gray-950 rounded-xl focus:outline-none focus:ring-1 focus:ring-accent text-xs"
+                  />
+                </div>
               </div>
             </div>
+          )}
+
+          <div className="pt-4">
+            <button
+              type="submit"
+              disabled={placing}
+              className="w-full py-3 bg-accent hover:bg-accent-hover text-white rounded-xl font-bold transition flex justify-center items-center gap-2 shadow-lg"
+            >
+              {placing ? 'Preparing order…' : 'Review order'}
+            </button>
           </div>
-        )}
-
-        <div className="pt-4">
-          <button
-            type="submit"
-            disabled={placing}
-            className="w-full py-3 bg-accent hover:bg-accent-hover text-white rounded-xl font-bold transition flex justify-center items-center gap-2 shadow-lg"
-          >
-            {placing ? 'Placing Order...' : 'Place Secure Order'}
-          </button>
-        </div>
-      </form>
+        </form>
+      )}
+      {review !== null && (
+        <section className="glass-card p-6 space-y-4" aria-label="Review order">
+          <h2 className="text-lg font-semibold">Review your order</h2>
+          <ul>
+            {review.quote.lines.map((line) => (
+              <li key={line.product_id}>
+                {line.quantity} × {line.name} ({line.package}) ·{' '}
+                {formatMoney.format(Number(line.price))} each
+              </li>
+            ))}
+          </ul>
+          <p className="font-semibold">Total {formatMoney.format(Number(review.quote.total))}</p>
+          <p className="text-muted">Payment is simulated. No money is charged.</p>
+          <div className="flex gap-3">
+            <button className="btn-secondary" disabled={placing} onClick={() => setReview(null)}>
+              Back
+            </button>
+            <button
+              className="btn-primary"
+              disabled={placing}
+              onClick={() => void placeReviewedOrder()}
+            >
+              {placing ? 'Placing order…' : 'Simulate payment and place order'}
+            </button>
+          </div>
+        </section>
+      )}
 
       <CustomDialog {...dialogProps} />
     </div>

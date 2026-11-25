@@ -1,6 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React, { useCallback, useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
+import {
+  BrowserRouter,
+  Link,
+  Routes,
+  Route,
+  useNavigate,
+  useLocation,
+  Navigate,
+} from 'react-router-dom';
 
 import { AppSidebar } from './components/AppSidebar';
 import { VoiceSessionProvider } from './contexts/VoiceSessionContext';
@@ -75,7 +83,7 @@ export const AppContent: React.FC = () => {
   const fetchProfile = useCallback(async () => {
     try {
       const data = await authService.getMe();
-      if (data && typeof data === 'object' && 'name' in data && 'role' in data) {
+      if ('name' in data && 'role' in data) {
         setUser({ name: data.name, role: data.role });
       } else {
         setUser(null);
@@ -115,7 +123,7 @@ export const AppContent: React.FC = () => {
     try {
       await authService.switchRole(newRole);
       const data = await authService.getMe();
-      if (data && typeof data === 'object' && 'name' in data && 'role' in data) {
+      if ('name' in data && 'role' in data) {
         setUser({ name: data.name, role: data.role });
       } else {
         setUser(null);
@@ -151,7 +159,20 @@ export const AppContent: React.FC = () => {
   }
 
   if (user === null) {
-    return <Login onLoginSuccess={fetchProfile} />;
+    if (location.pathname === '/items' || location.pathname.startsWith('/items/')) {
+      return (
+        <main className="w-full max-w-7xl mx-auto px-4 py-6">
+          <Link to="/login" className="block mb-4 text-accent">
+            Sign in
+          </Link>
+          <Routes>
+            <Route path="/items" element={<Catalog />} />
+            <Route path="/items/:id" element={<ItemDetail />} />
+          </Routes>
+        </main>
+      );
+    }
+    return <Login />;
   }
 
   return (

@@ -137,6 +137,7 @@ export type OrderItem = {
   product_id?: string;
   quantity: number;
   price_at_purchase: number;
+  fulfillment_status?: Order['status'];
   product?: {
     id: string;
     name: string;
@@ -157,6 +158,13 @@ export type Order = {
   out_for_delivery_at: string | null;
   delivered_at: string | null;
   items: OrderItem[];
+  fulfillments?: {
+    id: string;
+    seller_id: string;
+    status: Order['status'];
+    total: number;
+    items: OrderItem[];
+  }[];
 };
 
 export type PersistentFact = {
@@ -179,11 +187,6 @@ export type Address = {
   is_default: boolean;
 };
 
-export type AuthResponse = {
-  role: string;
-  name: string;
-};
-
 export type HealthStatus = {
   voice_ok: boolean;
   status: string;
@@ -204,20 +207,8 @@ export const authService = {
     const res = await api.get<ApiResponse<UserProfile> | UserProfile>('/auth/me');
     return extractApiData(res.data);
   },
-  register: async (data: UnknownRecord): Promise<AuthResponse> => {
-    const res = await api.post<ApiResponse<AuthResponse> | AuthResponse>('/auth/register', data);
-    return extractApiData(res.data);
-  },
-  login: async (data: UnknownRecord): Promise<AuthResponse> => {
-    const res = await api.post<ApiResponse<AuthResponse> | AuthResponse>('/auth/login', data);
-    return extractApiData(res.data);
-  },
   logout: async (): Promise<void> => {
     await api.post('/auth/logout');
-  },
-  devBypass: async (): Promise<AuthResponse> => {
-    const res = await api.post<ApiResponse<AuthResponse> | AuthResponse>('/auth/dev-bypass');
-    return extractApiData(res.data);
   },
   switchRole: async (role: 'customer' | 'seller'): Promise<{ role: string }> => {
     const res = await api.patch<ApiResponse<{ role: string }> | { role: string }>(
@@ -342,9 +333,34 @@ export const cartService = {
   },
 };
 
+export type CheckoutQuote = {
+  id: string;
+  total: number | string;
+  expires_at: string;
+  lines: {
+    product_id: string;
+    name: string;
+    package: string;
+    quantity: number;
+    price: number | string;
+  }[];
+};
 export const orderService = {
-  place: async (address: UnknownRecord): Promise<Order> => {
-    const res = await api.post<ApiResponse<Order>>('/orders', { delivery_address: address });
+  quote: async (
+    payload: { address_id: string } | { delivery_address: Record<string, string> }
+  ): Promise<CheckoutQuote> => {
+    const res = await api.post<ApiResponse<CheckoutQuote> | CheckoutQuote>(
+      '/orders/quotes',
+      payload
+    );
+    return extractApiData(res.data);
+  },
+  place: async (quoteId: string, key: string): Promise<Order> => {
+    const res = await api.post<ApiResponse<Order>>(
+      '/orders',
+      { quote_id: quoteId },
+      { headers: { 'Idempotency-Key': key } }
+    );
     return extractApiData(res.data);
   },
   list: async (

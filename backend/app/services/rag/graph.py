@@ -21,10 +21,10 @@ def get_neo4j_driver() -> AsyncDriver:
     return _neo4j_driver
 
 
-def close_neo4j_driver() -> None:
+async def close_neo4j_driver() -> None:
     global _neo4j_driver
     if _neo4j_driver is not None:
-        _neo4j_driver.close()
+        await _neo4j_driver.close()
         _neo4j_driver = None
 
 
@@ -121,7 +121,9 @@ def determine_aisle_for_category(category: str) -> str:
     return "Aisle 3 (Canned Goods)"  # Default fallback
 
 
-async def link_product_to_aisle(product_id: uuid.UUID, name: str, category: str) -> None:
+async def link_product_to_aisle(
+    product_id: uuid.UUID, name: str, category: str
+) -> None:
     driver = get_neo4j_driver()
     aisle_name = determine_aisle_for_category(category)
 
@@ -155,7 +157,9 @@ async def get_adjacent_products(product_id: uuid.UUID) -> list[dict[str, str]]:
 
     async with driver.session() as session:
         result = await session.run(query_aisle, product_id=pid_str)
-        products = [{"id": record["id"], "name": record["name"]} async for record in result]
+        products = [
+            {"id": record["id"], "name": record["name"]} async for record in result
+        ]
         if products:
             return products
 

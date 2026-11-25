@@ -16,9 +16,10 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_db
@@ -173,7 +174,19 @@ async def text_chat_endpoint(
     Structured results (cart, orders, products) are sent as a single payload.
     No artificial delays or fake chunking.
     """
+    if payload.approved_action is not None or payload.approved_payload is not None:
+        raise HTTPException(400, "Legacy approvals are unavailable.")
     session_id = payload.session_id
+    if (
+        session_id
+        and await db.scalar(
+            select(ChatSession.id).where(
+                ChatSession.id == session_id, ChatSession.user_id == user.id
+            )
+        )
+        is None
+    ):
+        raise HTTPException(404, "Conversation not found.")
     if not session_id:
         chat_session = ChatSession(user_id=user.id, mode=ChatMode.text)
         db.add(chat_session)
@@ -221,6 +234,15 @@ async def chat_history_endpoint(
     Used by the frontend to reload conversation history on page refresh.
     Returns an empty list if the session has expired or never existed.
     """
+    if (
+        await _db.scalar(
+            select(ChatSession.id).where(
+                ChatSession.id == session_id, ChatSession.user_id == user.id
+            )
+        )
+        is None
+    ):
+        raise HTTPException(404, "Conversation not found.")
     messages = await get_history(str(session_id), limit=limit)
     return {
         "session_id": str(session_id),

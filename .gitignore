@@ -11,7 +11,9 @@ wheels/
 .env.*
 !.env.example
 .idea
-models
+/models/
+/backend/models/
+/.env
 .\backend\.pytest_cache
 .\backend\.ruff_cache
 .\backend\.mypy_cache

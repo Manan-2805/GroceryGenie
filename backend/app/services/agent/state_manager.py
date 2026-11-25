@@ -318,11 +318,11 @@ async def resume(
         is_complete, missing, ask_text = sv_validate(tool_name, merged)
         if not is_complete:
             # Check for max retries to prevent infinite loop
-            MAX_SLOT_FILL_RETRIES = 3
-            if retry_count >= MAX_SLOT_FILL_RETRIES:
+            max_slot_fill_retries = 3
+            if retry_count >= max_slot_fill_retries:
                 await clear_pending(str(orchestrator.session_id))
                 logger.warning(
-                    f"[StateManager] Slot-fill for '{tool_name}' exceeded {MAX_SLOT_FILL_RETRIES} retries. "
+                    f"[StateManager] Slot-fill for '{tool_name}' exceeded {max_slot_fill_retries} retries. "
                     f"Clearing pending state for session {orchestrator.session_id}."
                 )
                 return {

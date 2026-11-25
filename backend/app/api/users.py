@@ -2,8 +2,8 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 
 from app.core.dependencies import get_current_user, get_db
 from app.db.models.enums import UserRole
@@ -38,7 +38,12 @@ async def switch_user_role(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Role must be 'customer' or 'seller'.",
         )
-    user.role = UserRole(body.role)
+    role = UserRole(body.role)
+    await db.execute(
+        update(User)
+        .where(User.id == user.id, User.role != role)
+        .values(role=role, mode_version=User.mode_version + 1)
+    )
     await db.commit()
     return {"role": body.role}
 

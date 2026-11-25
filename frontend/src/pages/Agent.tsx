@@ -131,14 +131,14 @@ export const Agent: React.FC = () => {
   // Load history when sessionId changes (mount or after clearSession + new session).
   // Only auto-restores to text mode if no manual mode override has happened.
   useEffect(() => {
-    if (!sessionId) return;
+    if (sessionId === null || sessionId.length === 0) return;
     api
       .get<{ messages: { role: string; content: string }[]; count: number }>(`/chat/history`, {
         params: { session_id: sessionId, limit: 20 },
       })
       .then((res) => {
         const data = res.data;
-        if (!data || data.count < 2) return;
+        if (data.count < 2) return;
         const loadedMessages: Message[] = data.messages.map((m) => ({
           id: nextId(),
           role: m.role === 'assistant' ? 'assistant' : 'user',
@@ -307,7 +307,12 @@ export const Agent: React.FC = () => {
             setMessages((prev) => {
               const updated = [...prev];
               const lastMsg = updated[updated.length - 1];
-              if (lastMsg && lastMsg.role === 'assistant' && lastMsg.type === 'text' && lastMsg.content === '') {
+              if (
+                lastMsg &&
+                lastMsg.role === 'assistant' &&
+                lastMsg.type === 'text' &&
+                lastMsg.content === ''
+              ) {
                 // Replace empty placeholder with the actual response text
                 updated[updated.length - 1] = { ...lastMsg, content: responseText };
               } else {

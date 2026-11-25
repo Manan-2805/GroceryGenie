@@ -1,44 +1,45 @@
-import datetime
-from typing import Any
+import hashlib
+import secrets
+from datetime import timedelta
 
-import jwt
-from jwt import (
-    ExpiredSignatureError,
-    InvalidTokenError,
-)
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
+from app.db.base import utc_now
+from app.db.models.login_session import LoginSession
+from app.db.models.user import User
 
-
-def create_access_token(
-    data: dict[str, Any],
-    expires_delta: datetime.timedelta | None = None,
-) -> str:
-    expire = datetime.datetime.now(datetime.UTC) + (
-        expires_delta
-        or datetime.timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    )
-
-    payload = {
-        **data,
-        "exp": expire,
-    }
-
-    return jwt.encode(
-        payload,
-        settings.JWT_SECRET_KEY,
-        algorithm=settings.JWT_ALGORITHM,
-    )
+SESSION_COOKIE = "session_token"
+SESSION_LIFETIME = timedelta(days=7)
 
 
-def decode_access_token(token: str) -> dict[str, Any] | None:
-    try:
-        return jwt.decode(
-            token,
-            settings.JWT_SECRET_KEY,
-            algorithms=[settings.JWT_ALGORITHM],
+def session_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def create_login_session(db: AsyncSession, user: User) -> str:
+    token = secrets.token_urlsafe(32)
+    db.add(
+        LoginSession(
+            user_id=user.id,
+            token_hash=session_hash(token),
+            expires_at=utc_now() + SESSION_LIFETIME,
         )
-    except ExpiredSignatureError:
+    )
+    return token
+
+
+async def authenticated_user(db: AsyncSession, token: str | None) -> User | None:
+    if not token or len(token) != 43:
         return None
-    except InvalidTokenError:
-        return None
+    return (
+        await db.scalars(
+            select(User)
+            .join(LoginSession, LoginSession.user_id == User.id)
+            .where(
+                LoginSession.token_hash == session_hash(token),
+                LoginSession.expires_at > utc_now(),
+            )
+            .execution_options(populate_existing=True)
+        )
+    ).one_or_none()

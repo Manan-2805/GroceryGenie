@@ -71,6 +71,7 @@ ignore_errors = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
+    "postgres: integration tests using a disposable PostgreSQL database",
     "e2e: end-to-end tests that require running backend/frontend services and browser",
 ]
 addopts = "--ignore=tests/e2e"

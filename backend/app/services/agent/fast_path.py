@@ -540,10 +540,27 @@ async def handle(
         # Only match if the message doesn't start with a question/list word.
         # These patterns indicate the user is asking, not selecting.
         _query_starters = (
-            "show", "list", "what", "which", "how", "are", "is", "do", "can",
-            "nope", "no", "why", "tell", "give", "find", "search", "display",
+            "show",
+            "list",
+            "what",
+            "which",
+            "how",
+            "are",
+            "is",
+            "do",
+            "can",
+            "nope",
+            "no",
+            "why",
+            "tell",
+            "give",
+            "find",
+            "search",
+            "display",
         )
-        starts_with_query = msg_lower.split()[0] in _query_starters if msg_lower.split() else False
+        starts_with_query = (
+            msg_lower.split()[0] in _query_starters if msg_lower.split() else False
+        )
 
         if is_short_message and not starts_with_query:
             # 2a. Voice numeric / ordinal index matching ("the first one", "option 2")

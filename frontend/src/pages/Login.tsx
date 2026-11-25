@@ -1,50 +1,11 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 
-import { authService } from '../services/api';
-
-type LoginProps = {
-  onLoginSuccess?: () => void;
-};
-
-type ErrorPayload = {
-  response?: {
-    data?: {
-      detail?: unknown;
-    };
-  };
-};
-
-const getErrorMessage = (error: unknown): string => {
-  const payload = error as ErrorPayload;
-  const detail = payload.response?.data?.detail;
-  return typeof detail === 'string' ? detail : 'Dev bypass failed.';
-};
-
-export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
+export const Login: React.FC = () => {
+  const [params] = useSearchParams();
+  const error = params.has('error') ? 'Google sign-in failed. Please try again.' : null;
   const handleGoogleLogin = () => {
-    const loginUrl = '/api/v1/auth/google/login';
-    window.location.href = loginUrl;
-  };
-
-  const handleDevBypass = async () => {
-    setError(null);
-    setLoading(true);
-    try {
-      await authService.devBypass();
-      if (onLoginSuccess) {
-        onLoginSuccess();
-      } else {
-        window.location.reload();
-      }
-    } catch (err: unknown) {
-      console.error(err);
-      setError(getErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
+    window.location.href = '/api/v1/auth/google/login';
   };
 
   return (
@@ -57,7 +18,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
           </p>
         </div>
 
-        {error !== null && error !== '' && (
+        {error !== null && (
           <div className="p-3 text-xs bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 rounded-xl border border-red-200 dark:border-red-900 text-left">
             {error}
           </div>
@@ -93,17 +54,13 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
           </button>
         </div>
 
-        {import.meta.env.DEV && (
-          <div className="pt-1">
-            <button onClick={handleDevBypass} disabled={loading} className="btn-primary w-full">
-              {loading ? 'Bypassing...' : 'Continue as Dev User'}
-            </button>
-          </div>
-        )}
+        <Link to="/items" className="block text-sm font-semibold text-accent">
+          Browse as a guest
+        </Link>
 
         <div className="border-t border-border/60 pt-4">
           <p className="text-[9px] text-muted leading-relaxed px-6">
-            Authorized logins are fully secured with httpOnly sessions.
+            Sign in to shop, manage your store, or use the assistant.
           </p>
         </div>
       </div>

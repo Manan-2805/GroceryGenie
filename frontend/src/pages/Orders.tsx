@@ -397,6 +397,20 @@ export const Orders: React.FC = () => {
 
               {/* Items Breakdown */}
               <div className="space-y-3">
+                {(selectedDetails?.fulfillments?.length ?? 0) > 0 && (
+                  <section className="space-y-2" aria-label="Seller shipments">
+                    <h4 className="text-sm font-semibold">Seller shipments</h4>
+                    <ul className="text-xs space-y-1">
+                      {selectedDetails?.fulfillments?.map((shipment) => (
+                        <li key={shipment.id}>
+                          {shipment.items.map((item) => item.product?.name ?? 'Product').join(', ')}
+                          {' · '}
+                          {shipment.status.replaceAll('_', ' ')}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
                 <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                   Ordered Items & Review Ratings
                 </h4>
@@ -406,7 +420,8 @@ export const Orders: React.FC = () => {
                 ) : (
                   <div className="divide-y divide-gray-100 dark:divide-gray-900 border dark:border-gray-900 rounded-xl bg-white dark:bg-gray-950/40 overflow-hidden">
                     {selectedDetails.items.map((item) => {
-                      const isDelivered = selectedOrder.status === 'delivered';
+                      const isDelivered =
+                        (item.fulfillment_status ?? selectedOrder.status) === 'delivered';
                       const key = `${selectedOrder.id}:${item.product_id}`;
                       const ratingState = ratings[key] ?? {
                         stars: 0,

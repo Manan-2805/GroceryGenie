@@ -137,31 +137,31 @@ _KNOWN_CATEGORIES = [
 
 def _normalize_category(category: str) -> str | None:
     """Try to match a user/LLM-provided category to a known category name.
-    
+
     First tries exact match, then case-insensitive match, then substring match.
     Returns the canonical category name, or None if no match found.
     """
     cat = category.strip()
     if not cat:
         return None
-    
+
     # Exact match
     if cat in _KNOWN_CATEGORIES:
         return cat
-    
+
     # Case-insensitive match
     cat_lower = cat.lower()
     for known in _KNOWN_CATEGORIES:
         if known.lower() == cat_lower:
             return known
-    
+
     # Substring match: known contains cat OR cat contains known
     for known in _KNOWN_CATEGORIES:
         known_lower = known.lower()
         if cat_lower in known_lower or known_lower in cat_lower:
             logger.info(f"Category fuzzy match: '{cat}' -> '{known}'")
             return known
-    
+
     # Word-level match: any word in cat matches any word in known
     cat_words = set(cat_lower.split())
     for known in _KNOWN_CATEGORIES:
@@ -169,7 +169,7 @@ def _normalize_category(category: str) -> str | None:
         if cat_words & known_words:  # intersection
             logger.info(f"Category word match: '{cat}' -> '{known}'")
             return known
-    
+
     return cat  # Return as-is if no match found
 
 
