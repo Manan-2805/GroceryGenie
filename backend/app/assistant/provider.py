@@ -106,10 +106,18 @@ async def request_plan(
                 if config.get("token_limit_field") == "max_completion_tokens"
                 else "max_tokens"
             )
-            request[token_field] = 900
-            effort = config.get("reasoning_effort")
-            if effort in ("low", "high", "max"):
-                request["reasoning_effort"] = effort
+            moonshot_k26 = (
+                str(config["base_url"]).rstrip("/") == "https://api.moonshot.ai/v1"
+                and config["model"] == "kimi-k2.6"
+            )
+            if moonshot_k26:
+                request["max_tokens"] = 900
+                request["thinking"] = {"type": "disabled"}
+            else:
+                request[token_field] = 900
+                effort = config.get("reasoning_effort")
+                if effort in ("low", "high", "max"):
+                    request["reasoning_effort"] = effort
             if config.get("json_object", True):
                 request["response_format"] = {"type": "json_object"}
             async with httpx.AsyncClient(timeout=timeout) as client:

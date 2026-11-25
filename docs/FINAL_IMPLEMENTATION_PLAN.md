@@ -5,12 +5,12 @@
 ## Implementation checklist
 
 - [x] R01–R03. Restore tracked ORM, portable checks, fresh migrations and deterministic seed.
-- [x] R04–R06. Add Google session integration, same-origin writes, owner scope and validated image uploads. Live Google authorization stays under release verification.
+- [x] R04–R06. Add Google session integration, same-origin writes, owner scope and validated image uploads. The maintainer confirmed live Google authorization.
 - [x] R07–R13. Implement and test shared PostgreSQL commerce, fulfillment, seller reporting and indexed search.
-- [ ] R14–R17. The typed runner, bounded plans, server-confirmed writes, local slot collection and owned memory have local evidence. Cloud-provider validation remains open.
+- [x] R14–R17. The typed runner, bounded plans, server-confirmed writes, local slot collection and owned memory have local evidence. The live Moonshot K2.6 smoke passed.
 - [x] R18–R20. Implement and measure CPU speech and Chromium hands-free mode. Document the limits of manual interruption and optional GPU work.
 - [x] R21–R23. Verify the updated customer and assistant browser flows in desktop Chromium.
-- [ ] R24–R28. Complete image security, live authorization and provider checks, Actions, GHCR and final PR approval.
+- [ ] R24–R28. Local image security and live authorization/provider checks passed. GitHub Actions, GHCR and final PR approval remain release items.
 
 [Implementation evidence and remaining verification](IMPLEMENTATION_REPORT.md)
 

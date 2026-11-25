@@ -17,7 +17,7 @@ FastAPI, PostgreSQL, React/Vite and nginx now ship as one CPU Compose applicatio
 | Check | Observed result |
 |---|---|
 | Fresh PostgreSQL migrations and Alembic schema comparison | Applied through 42045bef3db3. Alembic reported no new upgrade operations. |
-| Backend, typing and formatting | 22 tests passed with 81.42% application coverage. Checks included Ruff, strict Mypy and TypeScript, formatting and the production build. |
+| Backend, typing and formatting | 23 tests passed with 81.53% application coverage. Checks included Ruff, strict Mypy and TypeScript, formatting and the production build. |
 | Chromium 149 with real local speech enabled | Four scenarios passed. Public catalog and Google-only entry, authenticated text confirmation, multi-seller simulated checkout and the hands-free browser workflow using a synthetic microphone and the real local speech engines. |
 | Dependency and static checks | The initial Python and npm scans reported 30 and 21 findings respectively. Both registries reported zero known vulnerabilities after the package updates. Bandit found zero issues. Authlib still emits a deprecation notice about its HTTP transport. |
 | Container security | Trivy 0.76.2 found zero high or critical findings in the Wolfi Python backend and Alpine nginx 1.30.7 frontend runtime images after replacing the vulnerable base layers. |
@@ -25,14 +25,14 @@ FastAPI, PostgreSQL, React/Vite and nginx now ship as one CPU Compose applicatio
 | Seed replay | Exactly 10,000 synthetic products and 192 historical orders. Re-seeding preserved a stock edit. |
 | Docker | Both final non-root CPU runtimes built. The clean PostgreSQL 16.16 Compose deployment provisioned speech weights without host Python, migrated, seeded 10,000 products and 192 orders, and returned healthy database and speech flags. |
 
-The Chromium and API suites use disposable accounts and exercise the normal session cookie path. The callback exchange is mocked. Live Google authorization and paid cloud planning remain unverified because the workspace has neither credential configured. The controlled LLM smoke script is limited to one read-only planning request and uses provider rates supplied by the operator. No cloud credits have been consumed.
+The Chromium and API suites use disposable accounts and exercise the normal session cookie path. The automated OAuth callback exchange is mocked. The maintainer also completed real Google sign-in at the local Compose URL. One real Moonshot K2.6 request returned HTTP 200 and the expected read-only orders intent in 3.73 s, with 3,949 input and 11 output tokens. The application logged an estimated $0.012012 at the configured conservative rates. This estimate is separate from the provider invoice.
 
 ## Audit dispositions
 
 | Finding group | Recovery evidence |
 |---|---|
 | GG-001, GG-014–GG-017, GG-034, GG-052, GG-053 | Tracked ORM, clean migration, real PostgreSQL cart, checkout, seller fulfillment, reporting and review tests. |
-| GG-002–GG-010, GG-012, GG-026 | Revocable account sessions, owner-scoped access and server-issued confirmations. The signed-in application and mocked callback were exercised. Live OAuth and cloud routing are release checks. |
+| GG-002–GG-010, GG-012, GG-026 | Revocable account sessions, owner-scoped access and server-issued confirmations. The signed-in application and mocked callback were exercised. The maintainer confirmed live OAuth and one synthetic cloud routing request passed. |
 | GG-027–GG-029, GG-043, GG-046, GG-048 | Indexed catalog and explicit seed paths replace the old vector, graph, startup probes and cache dependencies. Search timings were measured against the full synthetic catalog. |
 | GG-030–GG-032, GG-055–GG-057 | Bounded CPU speech, playback-driven listening, explicit reconnect and manual cancellation. Docker and Chromium used actual speech assets. GPU and cloud-side cancellation remain unverified. |
 | GG-033, GG-038–GG-045, GG-054 | Local quality, dependency and image verification is recorded above. CI and GHCR still require a remote run. |
@@ -59,6 +59,6 @@ Catalog performance reflects filtered reads against the seeded application. Voic
 
 - Voice uses English and explicit reconnection. Manual interruption stops playback and cancels the server wait. A running native inference holds its capacity until completion. Natural barge-in and wake words are deferred. Cloud-side cancellation and billing require provider evidence.
 - Indexed lexical and structured search supports the catalog scope. Product recommendations remain limited by label data. The application cannot certify allergen safety.
-- Local image scanning passed. GitHub Actions and GHCR publication remain pending, alongside live Google and Moonshot verification. Opening the single PR to main requires a separate approval.
+- Local image scanning passed. Live Google sign-in and the bounded Moonshot planner smoke passed. The release workflow verifies the pushed revision and publishes passing images to GHCR. Opening the single PR to main requires a separate approval.
 
 [Recovery tasks and GG-001–GG-057 traceability](FINAL_IMPLEMENTATION_PLAN.md) [Historical audit](PROJECT_AUDIT.md) [Setup and demonstration](../README.md)
