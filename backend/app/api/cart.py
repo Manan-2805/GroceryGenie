@@ -1,13 +1,15 @@
 import uuid
 from decimal import Decimal
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import joinedload
 
 from app.commerce.cart import change_cart
+from app.commerce.receipts import prior_result, record_result
 from app.core.dependencies import get_current_customer, get_db
 from app.db.models.cart import CartItem
 from app.db.models.user import User
@@ -17,6 +19,8 @@ router = APIRouter(prefix="/cart", tags=["Cart"])
 
 # Schemas
 class CartProductDetail(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: uuid.UUID
     name: str
     price: Decimal
@@ -30,17 +34,16 @@ class CartItemResponse(BaseModel):
     quantity: int
     product: CartProductDetail
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AddCartItemPayload(BaseModel):
     product_id: uuid.UUID
-    quantity: int = Field(1, ge=1, le=1000)
+    quantity: int = Field(1, ge=1, le=1000, strict=True)
 
 
 class UpdateCartItemPayload(BaseModel):
-    quantity: int = Field(ge=1, le=1000)
+    quantity: int = Field(ge=1, le=1000, strict=True)
 
 
 @router.get("", response_model=list[CartItemResponse])
@@ -71,12 +74,21 @@ async def _get_cart_item(
 @router.post("", response_model=CartItemResponse, status_code=status.HTTP_201_CREATED)
 async def add_to_cart(
     payload: AddCartItemPayload,
+    idempotency_key: Annotated[uuid.UUID, Header()],
     user: User = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
-) -> CartItem:
+) -> CartItemResponse:
+    intent = f"cart-add:{payload.product_id}:{payload.quantity}"
+    prior = await prior_result(db, user.id, idempotency_key, intent, CartItemResponse)
+    if prior is not None:
+        return prior
     await change_cart(db, user.id, payload.product_id, payload.quantity, add=True)
+    result = CartItemResponse.model_validate(
+        await _get_cart_item(db, user.id, payload.product_id)
+    )
+    record_result(db, user.id, idempotency_key, intent, result)
     await db.commit()
-    return await _get_cart_item(db, user.id, payload.product_id)
+    return result
 
 
 @router.put("/{product_id}", response_model=CartItemResponse)

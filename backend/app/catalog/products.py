@@ -1,10 +1,10 @@
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
-from sqlalchemy import Select, func, literal_column, or_, select
+from sqlalchemy import Select, Text, func, literal_column, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.expression import cast
@@ -70,6 +70,7 @@ class SearchFilters(BaseModel):
     min_price: Money | None = None
     max_price: Money | None = None
     min_rating: Annotated[Decimal, Field(ge=0, le=5)] | None = None
+    sort: Literal["relevance", "cheapest"] = "relevance"
 
 
 def product_query(
@@ -94,17 +95,14 @@ def product_query(
         stmt = stmt.where(Product.price <= filters.max_price)
     if filters.min_rating is not None:
         stmt = stmt.where(Product.avg_rating >= filters.min_rating)
+    if filters.sort == "cheapest":
+        stmt = stmt.order_by(Product.price.asc())
     query = filters.query.strip()
     if query:
-        fts_config = literal_column("'simple'::regconfig")
-        document = literal_column(SEARCH_DOCUMENT)
+        fts_config = literal_column("'simple'::regconfig", Text())
+        document = literal_column(SEARCH_DOCUMENT, Text())
         needle = func.plainto_tsquery(fts_config, query)
-        stmt = stmt.where(
-            or_(
-                document.bool_op("@@")(needle),
-                Product.name.icontains(query, autoescape=True),
-            )
-        )
+        stmt = stmt.where(document.bool_op("@@")(needle))
         if ranked:
             stmt = stmt.order_by(
                 (func.lower(Product.name) == query.lower()).desc(),
@@ -179,3 +177,11 @@ def create_product(seller_id: UUID, payload: ProductCreate) -> Product:
     if payload.dietary_tags is not None:
         values["dietary_tags"] = [tag.lower() for tag in payload.dietary_tags]
     return Product(seller_id=seller_id, **values)
+
+
+def increase_stock(product: Product, quantity: int) -> None:
+    if not 1 <= quantity <= 100_000:
+        raise HTTPException(422, "Enter a positive quantity up to 100,000.")
+    if product.stock + quantity > 1_000_000:
+        raise HTTPException(409, "Stock limit exceeded.")
+    product.stock += quantity

@@ -3,6 +3,12 @@ import React, { useCallback, useEffect, useState, useRef } from 'react';
 
 import { CustomDialog } from '../components/CustomDialog';
 import { DataTable, Column } from '../components/DataTable';
+import {
+  GroceryFactsFields,
+  emptyFacts,
+  formFacts,
+  productFacts,
+} from '../components/GroceryFactsFields';
 import { productService, Product, api } from '../services/api';
 
 export const InventoryManagement: React.FC = () => {
@@ -22,6 +28,11 @@ export const InventoryManagement: React.FC = () => {
   const [filterStock, setFilterStock] = useState<string>('All'); // All, Low (< 10), Out of Stock
 
   // New Product Form state
+  const [newFacts, setNewFacts] = useState(emptyFacts);
+  const [editFacts, setEditFacts] = useState(emptyFacts);
+  const [stockAddition, setStockAddition] = useState('');
+  const [savingStock, setSavingStock] = useState(false);
+  const stockKey = useRef(window.crypto.randomUUID());
   const [showAddForm, setShowAddForm] = useState(false);
   const [newProduct, setNewProduct] = useState({
     name: '',
@@ -50,7 +61,15 @@ export const InventoryManagement: React.FC = () => {
     pageRef.current = page;
   }, [page]);
 
-  const categories = ['Dairy & Eggs', 'Produce', 'Pantry', 'Bakery', 'Beverages'];
+  const categories = [
+    'Dairy & Eggs',
+    'Produce',
+    'Pantry',
+    'Bakery',
+    'Beverages',
+    'Frozen',
+    'Snacks',
+  ];
 
   // Custom Dialog States
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -145,6 +164,7 @@ export const InventoryManagement: React.FC = () => {
     e.preventDefault();
     try {
       await productService.create({
+        ...productFacts(newFacts),
         name: newProduct.name,
         description: newProduct.description,
         category: newProduct.category,
@@ -155,6 +175,7 @@ export const InventoryManagement: React.FC = () => {
 
       showDialog('Success', 'Product successfully added to catalog.');
       setShowAddForm(false);
+      setNewFacts(emptyFacts);
       setNewProduct({
         name: '',
         description: '',
@@ -181,6 +202,9 @@ export const InventoryManagement: React.FC = () => {
       stock: product.stock.toString(),
       is_active: product.is_active,
     });
+    setEditFacts(formFacts(product));
+    setStockAddition('');
+    stockKey.current = window.crypto.randomUUID();
     setUploadedImageUrl(product.image_url ?? '');
   };
 
@@ -190,11 +214,13 @@ export const InventoryManagement: React.FC = () => {
 
     try {
       await productService.update(editingProductId, {
+        ...productFacts(editFacts),
         name: editForm.name,
         description: editForm.description,
         category: editForm.category,
         price: parseFloat(editForm.price),
         stock: parseInt(editForm.stock),
+        ...(originalProductRef.current ? { expected_stock: originalProductRef.current.stock } : {}),
         image_url: uploadedImageUrl || '',
         is_active: editForm.is_active,
       });
@@ -214,6 +240,7 @@ export const InventoryManagement: React.FC = () => {
     return (
       editForm.name !== orig.name ||
       editForm.description !== (orig.description ?? '') ||
+      JSON.stringify(editFacts) !== JSON.stringify(formFacts(orig)) ||
       editForm.category !== orig.category ||
       parseFloat(editForm.price) !== orig.price ||
       parseInt(editForm.stock) !== orig.stock ||
@@ -295,7 +322,7 @@ export const InventoryManagement: React.FC = () => {
       sortable: true,
       render: (val) => (
         <span className="font-bold text-gray-700 dark:text-gray-300">
-          €{Number(val).toFixed(2)}
+          ₹{Number(val).toFixed(2)}
         </span>
       ),
     },
@@ -418,7 +445,7 @@ export const InventoryManagement: React.FC = () => {
             </div>
 
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-gray-400 uppercase">Price (€)</label>
+              <label className="text-[10px] font-bold text-gray-400 uppercase">Price (₹)</label>
               <input
                 type="number"
                 step="0.01"
@@ -457,6 +484,9 @@ export const InventoryManagement: React.FC = () => {
               </select>
             </div>
 
+            <div className="md:col-span-2">
+              <GroceryFactsFields values={newFacts} onChange={setNewFacts} />
+            </div>
             <div className="md:col-span-2 space-y-1">
               <label className="text-[10px] font-bold text-gray-400 uppercase">Description</label>
               <textarea
@@ -634,10 +664,65 @@ export const InventoryManagement: React.FC = () => {
                         />
                       </div>
 
+                      <GroceryFactsFields values={editFacts} onChange={setEditFacts} />
+                      <div className="flex items-end gap-2">
+                        <label className="grid gap-1 text-xs">
+                          Quantity to add
+                          <input
+                            className="rounded-lg border bg-transparent p-2"
+                            type="number"
+                            min={1}
+                            max={100000}
+                            value={stockAddition}
+                            onChange={(event) => {
+                              setStockAddition(event.target.value);
+                              stockKey.current = window.crypto.randomUUID();
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="rounded-lg bg-accent px-3 py-2 text-sm text-white"
+                          disabled={
+                            savingStock ||
+                            !Number.isInteger(Number(stockAddition)) ||
+                            Number(stockAddition) < 1
+                          }
+                          onClick={() => {
+                            if (editingProductId === null) return;
+                            setSavingStock(true);
+                            void productService
+                              .addStock(editingProductId, Number(stockAddition), stockKey.current)
+                              .then((updated) => {
+                                if (originalProductRef.current)
+                                  originalProductRef.current = {
+                                    ...originalProductRef.current,
+                                    stock: updated.stock,
+                                  };
+                                setEditForm((value) => ({
+                                  ...value,
+                                  stock: String(updated.stock),
+                                }));
+                                setStockAddition('');
+                                stockKey.current = window.crypto.randomUUID();
+                                void fetchProducts();
+                              })
+                              .catch(() =>
+                                showDialog(
+                                  'Error',
+                                  'Stock could not be added. You can retry the same update.'
+                                )
+                              )
+                              .finally(() => setSavingStock(false));
+                          }}
+                        >
+                          Add stock
+                        </button>
+                      </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1">
                           <label className="text-[10px] font-bold text-gray-400 uppercase">
-                            Price (€)
+                            Price (₹)
                           </label>
                           <input
                             type="number"

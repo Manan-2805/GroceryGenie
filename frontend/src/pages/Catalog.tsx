@@ -1,119 +1,62 @@
-import { Search, Filter, Star } from 'lucide-react';
-import React, { useCallback, useEffect, useState, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Search, Filter, Star, ShoppingBasket } from 'lucide-react';
+import { useState, type FC } from 'react';
 import { Link } from 'react-router-dom';
 
-import { productService, Product } from '../services/api';
+import { productService } from '../services/api';
 
-export const Catalog: React.FC = () => {
-  if (import.meta.env.DEV) {
-    // eslint-disable-next-line no-console
-    console.log('[Dev Render] Catalog Page');
-  }
-
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(false);
-  const loadingRef = useRef(false);
-
-  // Filter & Search states
+export const Catalog: FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('');
-  const [minPrice, setMinPrice] = useState<string>('');
-  const [maxPrice, setMaxPrice] = useState<string>('');
-  const [minRating, setMinRating] = useState<number>(0);
-  const [onlyInStock, setOnlyInStock] = useState<boolean>(false);
-
-  // Sort states
-  const [sortBy, setSortBy] = useState<string>('name');
-  const [sortDir, setSortDir] = useState<string>('asc');
-
-  // Pagination states
+  const [selectedCategory, setSelectedCategory] = useState('');
+  const [minPrice, setMinPrice] = useState('');
+  const [maxPrice, setMaxPrice] = useState('');
+  const [minRating, setMinRating] = useState(0);
+  const [onlyInStock, setOnlyInStock] = useState(false);
+  const [sortBy, setSortBy] = useState('');
+  const [sortDir, setSortDir] = useState('asc');
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const categories = [
+    'Dairy & Eggs',
+    'Produce',
+    'Pantry',
+    'Bakery',
+    'Beverages',
+    'Frozen',
+    'Snacks',
+  ];
 
-  // Hardcoded standard categories for filters
-  const categories = ['Dairy & Eggs', 'Produce', 'Pantry', 'Bakery', 'Beverages'];
-
-  const fetchProducts = useCallback(
-    async (pageNum: number, append: boolean = false) => {
-      if (loadingRef.current) return;
-      loadingRef.current = true;
-      setLoading(true);
-      try {
-        const data = await productService.list(
-          selectedCategory.length > 0 ? selectedCategory : undefined,
-          undefined,
-          pageNum,
-          10,
-          minPrice.length > 0 ? parseFloat(minPrice) : undefined,
-          maxPrice.length > 0 ? parseFloat(maxPrice) : undefined,
-          minRating > 0 ? minRating : undefined,
-          onlyInStock || undefined,
-          searchQuery.length > 0 ? searchQuery : undefined,
-          sortBy.length > 0 ? sortBy : undefined,
-          sortDir.length > 0 ? sortDir : undefined
-        );
-
-        if (append) {
-          setProducts((prev) => {
-            // Filter out duplicates to avoid duplicate key warnings
-            const existingIds = new Set(prev.map((p) => p.id));
-            const newItems = data.items.filter((item) => !existingIds.has(item.id));
-            return [...prev, ...newItems];
-          });
-        } else {
-          setProducts(data.items);
-        }
-        setTotalPages(data.pages);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        loadingRef.current = false;
-        setLoading(false);
-      }
-    },
-    [maxPrice, minPrice, minRating, onlyInStock, searchQuery, selectedCategory, sortBy, sortDir]
-  );
-
-  // Triggered when filters change: reset page to 1 and replace list
-  useEffect(() => {
-    setPage(1);
-    void fetchProducts(1, false);
-  }, [
-    fetchProducts,
-    selectedCategory,
-    minPrice,
-    maxPrice,
-    minRating,
-    onlyInStock,
-    searchQuery,
-    sortBy,
-    sortDir,
-  ]);
-
-  // Triggered when infinite scroll increments page
-  useEffect(() => {
-    if (page > 1) {
-      void fetchProducts(page, true);
-    }
-  }, [fetchProducts, page]);
-
-  // Infinite scroll listener
-  useEffect(() => {
-    const handleScroll = () => {
-      if (loading || page >= totalPages) return;
-
-      const threshold = 200; // pixels from the bottom
-      const docHeight = document.documentElement.scrollHeight;
-      const scrolled = window.innerHeight + window.scrollY;
-
-      if (docHeight - scrolled < threshold) {
-        setPage((p) => p + 1);
-      }
-    };
-
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, [loading, page, totalPages]);
+  const query = useQuery({
+    queryKey: [
+      'catalog',
+      selectedCategory,
+      searchQuery,
+      minPrice,
+      maxPrice,
+      minRating,
+      onlyInStock,
+      sortBy,
+      sortDir,
+      page,
+    ],
+    queryFn: ({ signal }) =>
+      productService.list(
+        selectedCategory || undefined,
+        undefined,
+        page,
+        20,
+        minPrice.length > 0 ? Number(minPrice) : undefined,
+        maxPrice.length > 0 ? Number(maxPrice) : undefined,
+        minRating > 0 ? minRating : undefined,
+        onlyInStock,
+        searchQuery.trim() || undefined,
+        sortBy || undefined,
+        sortDir,
+        signal
+      ),
+  });
+  const products = query.data?.items ?? [];
+  const loading = query.isPending;
+  const totalPages = query.data?.pages ?? 1;
 
   return (
     <div className="max-w-6xl mx-auto py-8 px-4 text-left space-y-6">
@@ -124,7 +67,7 @@ export const Catalog: React.FC = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         {/* Sidebar Filters */}
-        <div className="lg:col-span-1 glass-card p-6 h-fit space-y-6">
+        <div className="lg:col-span-1 glass-card p-6 h-fit space-y-6" onChange={() => setPage(1)}>
           <div className="flex items-center gap-2 pb-3 border-b dark:border-gray-800">
             <Filter size={18} className="text-accent" />
             <h3 className="font-bold text-gray-800 dark:text-gray-200">Filters & Sorting</h3>
@@ -138,7 +81,10 @@ export const Catalog: React.FC = () => {
                 type="text"
                 placeholder="Apple, Milk..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setPage(1);
+                }}
                 className="w-full pl-9 pr-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
               />
               <Search size={14} className="absolute left-3 top-3 text-gray-400" />
@@ -164,7 +110,7 @@ export const Catalog: React.FC = () => {
 
           {/* Price Range */}
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-gray-400 uppercase">Price Range (€)</label>
+            <label className="text-[10px] font-bold text-gray-400 uppercase">Price Range (₹)</label>
             <div className="flex gap-2 items-center">
               <input
                 type="number"
@@ -230,6 +176,7 @@ export const Catalog: React.FC = () => {
                 onChange={(e) => setSortBy(e.target.value)}
                 className="w-full px-3 py-2 border dark:border-gray-800 bg-transparent rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-accent"
               >
+                <option value="">Relevance</option>
                 <option value="name">Name</option>
                 <option value="price">Price</option>
                 <option value="avg_rating">Rating</option>
@@ -253,8 +200,15 @@ export const Catalog: React.FC = () => {
         </div>
 
         {/* Product Listing */}
-        <div className="lg:col-span-3 space-y-6 max-h-screen overflow-y-auto">
-          {products.length === 0 && !loading ? (
+        <div className="lg:col-span-3 space-y-6">
+          {query.isError ? (
+            <div role="alert" className="glass-card p-4">
+              Catalog is unavailable.{' '}
+              <button type="button" onClick={() => void query.refetch()}>
+                Retry
+              </button>
+            </div>
+          ) : products.length === 0 && !loading ? (
             <div className="p-12 border border-dashed border-border rounded-2xl text-center text-muted glass-card">
               No matching products found in the catalog.
             </div>
@@ -268,15 +222,17 @@ export const Catalog: React.FC = () => {
                 >
                   {/* Product Image */}
                   <div className="h-44 w-full bg-gray-50 dark:bg-gray-950/40 p-4 flex items-center justify-center border-b dark:border-gray-800">
-                    <img
-                      src={
-                        typeof product.image_url === 'string' && product.image_url.trim().length > 0
-                          ? product.image_url
-                          : 'https://via.placeholder.com/150'
-                      }
-                      alt={product.name}
-                      className="h-full object-contain group-hover:scale-105 transition duration-300"
-                    />
+                    {typeof product.image_url === 'string' &&
+                    product.image_url.trim().length > 0 ? (
+                      <img
+                        src={product.image_url}
+                        loading="lazy"
+                        alt=""
+                        className="h-full object-contain"
+                      />
+                    ) : (
+                      <ShoppingBasket aria-hidden className="h-12 w-12 text-accent" />
+                    )}
                   </div>
 
                   {/* Product Info */}
@@ -299,7 +255,7 @@ export const Catalog: React.FC = () => {
 
                     <div className="flex justify-between items-center pt-2">
                       <span className="text-base font-semibold text-accent dark:text-accent">
-                        €{product.price.toFixed(2)}
+                        ₹{product.price.toFixed(2)}
                       </span>
                       <span
                         className={`text-[10px] px-2 py-0.5 rounded font-bold ${product.stock > 0 ? 'bg-gray-100 dark:bg-gray-800 text-gray-500' : 'bg-red-50 text-red-600 dark:bg-red-950/20'}`}
@@ -313,6 +269,29 @@ export const Catalog: React.FC = () => {
             </div>
           )}
 
+          {totalPages > 1 && (
+            <nav aria-label="Catalog pages" className="flex items-center justify-center gap-4">
+              <button
+                type="button"
+                className="rounded border px-3 py-2"
+                disabled={page <= 1 || loading}
+                onClick={() => setPage(page - 1)}
+              >
+                Previous
+              </button>
+              <span>
+                Page {page} of {totalPages}
+              </span>
+              <button
+                type="button"
+                className="rounded border px-3 py-2"
+                disabled={page >= totalPages || loading}
+                onClick={() => setPage(page + 1)}
+              >
+                Next
+              </button>
+            </nav>
+          )}
           {loading && (
             <div className="text-center py-4 text-xs font-semibold text-gray-400">
               Loading catalog items...

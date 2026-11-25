@@ -119,7 +119,7 @@ export const Cart: React.FC = () => {
       key: 'price',
       header: 'Price',
       sortable: true,
-      render: (_, item) => `€${item.product.price.toFixed(2)}`,
+      render: (_, item) => `₹${item.product.price.toFixed(2)}`,
     },
     {
       key: 'quantity',
@@ -155,7 +155,7 @@ export const Cart: React.FC = () => {
       sortable: true,
       render: (_, item) => (
         <span className="font-bold text-accent dark:text-accent">
-          €{(item.product.price * item.quantity).toFixed(2)}
+          ₹{(item.product.price * item.quantity).toFixed(2)}
         </span>
       ),
     },
@@ -218,7 +218,7 @@ export const Cart: React.FC = () => {
               <div className="flex justify-between text-sm py-2">
                 <span className="text-gray-500">Subtotal</span>
                 <span className="font-semibold text-gray-800 dark:text-gray-200">
-                  €{total.toFixed(2)}
+                  ₹{total.toFixed(2)}
                 </span>
               </div>
               <div className="flex justify-between text-sm py-2">
@@ -227,7 +227,7 @@ export const Cart: React.FC = () => {
               </div>
               <div className="flex justify-between text-base font-semibold py-3">
                 <span>Total</span>
-                <span className="text-accent dark:text-accent">€{total.toFixed(2)}</span>
+                <span className="text-accent dark:text-accent">₹{total.toFixed(2)}</span>
               </div>
             </div>
 

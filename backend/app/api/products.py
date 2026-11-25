@@ -3,10 +3,10 @@ import io
 import json
 from collections.abc import AsyncIterator
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Select, func, select
@@ -18,10 +18,12 @@ from app.catalog.products import (
     ProductUpdate,
     SearchFilters,
     create_product,
+    increase_stock,
     product_query,
     seller_product,
     write_product,
 )
+from app.commerce.receipts import prior_result, record_result
 from app.core.config import UPLOADS_DIR
 from app.core.dependencies import get_current_seller, get_current_user, get_db
 from app.db.models.product import Product
@@ -69,7 +71,9 @@ async def pagination(
 ) -> tuple[list[Product], int, int]:
     total = (
         await db.scalar(
-            select(func.count()).select_from(stmt.order_by(None).subquery())
+            select(func.count()).select_from(
+                stmt.with_only_columns(Product.id).order_by(None).subquery()
+            )
         )
         or 0
     )
@@ -81,13 +85,17 @@ async def pagination(
 async def list_products(
     category: Annotated[str | None, Query(max_length=100)] = None,
     featured: bool = False,
-    min_price: Annotated[Decimal | None, Query(ge=0)] = None,
-    max_price: Annotated[Decimal | None, Query(ge=0)] = None,
+    min_price: Annotated[
+        Decimal | None, Query(ge=0, max_digits=10, decimal_places=2)
+    ] = None,
+    max_price: Annotated[
+        Decimal | None, Query(ge=0, max_digits=10, decimal_places=2)
+    ] = None,
     min_rating: Annotated[Decimal | None, Query(ge=0, le=5)] = None,
     only_in_stock: bool = False,
     search: Annotated[str | None, Query(max_length=160)] = None,
-    sort_by: str | None = None,
-    sort_dir: str | None = None,
+    sort_by: Literal["name", "price", "avg_rating", "sold_count"] | None = None,
+    sort_dir: Literal["asc", "desc"] | None = None,
     page: Page = 1,
     limit: Limit = 20,
     db: AsyncSession = Depends(get_db),
@@ -176,8 +184,10 @@ async def upload_product_image(
     file: UploadFile = File(...),
     _: User = Depends(get_current_seller),
 ) -> dict[str, str]:
-    async with file:
+    try:
         data = await file.read(MAX_IMAGE_BYTES + 1)
+    finally:
+        await file.close()
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(413, "Image is larger than 5 MB.")
     return {"url": f"/uploads/{await asyncio.to_thread(encode_upload, data)}"}
@@ -219,22 +229,29 @@ async def update_product(
 
 
 class StockAddition(BaseModel):
-    quantity: int = Field(gt=0, le=100_000)
+    quantity: int = Field(gt=0, le=100_000, strict=True)
 
 
 @router.post("/{product_id}/stock", response_model=SellerProductResponse)
 async def add_stock(
     product_id: UUID,
     payload: StockAddition,
+    idempotency_key: Annotated[UUID, Header()],
     seller: User = Depends(get_current_seller),
     db: AsyncSession = Depends(get_db),
-) -> Product:
+) -> SellerProductResponse:
+    intent = f"stock:{product_id}:{payload.quantity}"
+    prior = await prior_result(
+        db, seller.id, idempotency_key, intent, SellerProductResponse
+    )
+    if prior is not None:
+        return prior
     product = await seller_product(db, seller.id, product_id)
-    if product.stock + payload.quantity > 1_000_000:
-        raise HTTPException(409, "Stock limit exceeded.")
-    product.stock += payload.quantity
+    increase_stock(product, payload.quantity)
+    result = SellerProductResponse.model_validate(product)
+    record_result(db, seller.id, idempotency_key, intent, result)
     await db.commit()
-    return product
+    return result
 
 
 @router.delete("/{product_id}")

@@ -172,7 +172,7 @@ export const Home: React.FC = () => {
 
                   <div className="flex items-center gap-4">
                     <span className="text-2xl font-semibold text-accent">
-                      €{currentProduct.price.toFixed(2)}
+                      ₹{currentProduct.price.toFixed(2)}
                     </span>
                     <span className="text-xs text-muted">Category: {currentProduct.category}</span>
                   </div>

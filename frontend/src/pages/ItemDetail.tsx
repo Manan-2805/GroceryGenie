@@ -6,10 +6,12 @@ import { CustomDialog } from '../components/CustomDialog';
 import { productService, cartService, Product, api } from '../services/api';
 
 type ReviewItem = {
+  id: string;
   created_at: string;
   user_name?: string;
   stars?: number;
   comment?: string;
+  reply?: string | null;
 };
 
 type ReviewPayload = {
@@ -70,12 +72,8 @@ export const ItemDetail: React.FC = () => {
         setReviewsTotalPages(payload.pages);
         if (append) {
           setReviews((prev) => {
-            const existingTimestamps = new Set(
-              prev.map((review) => new Date(review.created_at).getTime())
-            );
-            const newItems = payload.items.filter(
-              (item) => !existingTimestamps.has(new Date(item.created_at).getTime())
-            );
+            const existing = new Set(prev.map((review) => review.id));
+            const newItems = payload.items.filter((item) => !existing.has(item.id));
             return [...prev, ...newItems];
           });
         } else {
@@ -269,11 +267,42 @@ export const ItemDetail: React.FC = () => {
               {product.name}
             </h1>
             <p className="text-sm text-gray-500 mt-3 leading-relaxed">{product.description}</p>
+            <dl className="mt-3 grid gap-1 text-sm">
+              <div>
+                <dt className="inline font-semibold">Package </dt>
+                <dd className="inline">{product.package ?? 'Unavailable'}</dd>
+              </div>
+              <div>
+                <dt className="inline font-semibold">Ingredients </dt>
+                <dd className="inline">{product.ingredients ?? 'Unavailable'}</dd>
+              </div>
+              <div>
+                <dt className="inline font-semibold">Dietary labels </dt>
+                <dd className="inline">
+                  {(product.dietary_tags ?? []).join(', ') || 'Unavailable'}
+                </dd>
+              </div>
+              <div>
+                <dt className="inline font-semibold">Allergens </dt>
+                <dd className="inline">
+                  {product.allergens == null
+                    ? 'Unknown. Check the physical label.'
+                    : product.allergens.join(', ') ||
+                      'None listed by seller. Check the physical label.'}
+                </dd>
+              </div>
+              {Object.entries(product.nutrition ?? {}).map(([label, value]) => (
+                <div key={label}>
+                  <dt className="inline font-semibold">{label} </dt>
+                  <dd className="inline">{value}</dd>
+                </div>
+              ))}
+            </dl>
           </div>
 
           <div className="flex items-baseline gap-4">
             <span className="text-4xl font-semibold text-accent dark:text-accent">
-              €{product.price.toFixed(2)}
+              ₹{product.price.toFixed(2)}
             </span>
             <span
               className={`text-xs font-semibold px-2.5 py-0.5 rounded ${

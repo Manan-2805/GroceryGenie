@@ -271,12 +271,15 @@ async def list_orders(
 
 @router.get("/seller/queue", response_model=OrderPaginatedResponse)
 async def list_seller_orders(
+    pending_only: bool = False,
     page: Page = 1,
     limit: Limit = 10,
     seller: User = Depends(get_current_seller),
     db: AsyncSession = Depends(get_db),
 ) -> OrderPaginatedResponse:
     predicate = Fulfillment.seller_id == seller.id
+    if pending_only:
+        predicate = predicate & (Fulfillment.status != OrderStatus.delivered)
     total = await db.scalar(select(func.count(Fulfillment.id)).where(predicate)) or 0
     children = list(
         await db.scalars(

@@ -26,3 +26,5 @@ AGENTS.md
 .vscode/
 uploads/
 backend/prompt_logs/
+.coverage
+.coverage.*

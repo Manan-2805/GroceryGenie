@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.commerce.checkout import lock_customer
@@ -44,6 +44,11 @@ async def change_cart(
     if quantity <= 0 or not 1 <= updated_quantity <= min(product.stock, 1000):
         raise HTTPException(409, "Requested quantity is not available.")
     if item is None:
+        count = await db.scalar(
+            select(func.count(CartItem.id)).where(CartItem.user_id == user_id)
+        )
+        if count and count >= 100:
+            raise HTTPException(409, "Your cart can hold up to 100 different products.")
         db.add(
             CartItem(user_id=user_id, product_id=product_id, quantity=updated_quantity)
         )

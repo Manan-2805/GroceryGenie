@@ -1,553 +1,237 @@
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-export type VoiceSessionState = {
-  status: 'idle' | 'transcribing' | 'thinking' | 'speaking' | 'waiting_permission';
-  transcript: string;
-  sttTiming: number | null; // STT transcription time in seconds
-  isConnecting: boolean;
-  isConnected: boolean;
-  permissionRequest: {
-    action: string;
-    summary: string;
-    payload: unknown;
-  } | null;
-  lastToolResult: Record<string, unknown> | null;
-  error: string | null;
-  audioLevel: number; // 0-1 for waveform visualization
-  optionsRequest: {
-    text: string;
-    options: Array<{
-      label: string;
-      value: string;
-      description?: string;
-      actions?: Array<{ label: string; value: string }>;
-    }>;
-    freeInputAllowed: boolean;
-    cardVariant?: string;
-  } | null;
-  roleSwitchRequest: {
-    text: string;
-    neededRole: string;
-    originalTool: string;
-    options: Array<{ label: string; value: string; description?: string }>;
-  } | null;
+import type { AssistantEvent } from '../services/assistant';
+
+type Status = 'idle' | 'connecting' | 'listening' | 'transcribing' | 'thinking' | 'speaking';
+
+type VoiceCallbacks = {
+  session: (id: string) => void;
+  speech: (text: string) => void;
+  event: (event: AssistantEvent) => void;
 };
 
-type VoiceSessionContextType = {
-  state: VoiceSessionState;
-  startSession: (sessionId?: string) => Promise<void>;
-  endSession: (clearError?: boolean) => void;
-  sendPermissionResponse: (approved: boolean) => void;
-  sendTextMessage: (text: string) => void;
+type VoiceConnection = {
+  audio: AudioContext;
+  stream: MediaStream | null;
+  worklet: AudioWorkletNode | null;
+  socket: WebSocket | null;
+  sampleRate: number;
+  acceptInput: boolean;
+  playbackComplete: boolean;
+  audioEnd: number;
+  sources: Set<AudioBufferSourceNode>;
 };
 
-type VoiceMessage = {
-  type?: string;
-  action?: string;
-  summary?: string;
-  payload?: unknown;
-  result?: Record<string, unknown>;
-  status?: VoiceSessionState['status'];
-  text?: string;
-  timing?: number;
-  navigate_to?: string;
-  navigate_label?: string;
-  session_id?: string;
-  options?: Array<{
-    label: string;
-    value: string;
-    description?: string;
-    actions?: Array<{ label: string; value: string }>;
-  }>;
-  free_input_allowed?: boolean;
-  needed_role?: string;
-  original_tool?: string;
-  card_variant?: string;
-};
+type WireMessage =
+  | AssistantEvent
+  | {
+      type:
+        | 'voice_error'
+        | 'session_started'
+        | 'audio_format'
+        | 'playback_ended'
+        | 'stop_playback'
+        | 'partial_transcript'
+        | 'status';
+      text?: string;
+      session_id?: string;
+      sample_rate?: number;
+      status?: Status;
+    };
 
-const VoiceSessionContext = createContext<VoiceSessionContextType | null>(null);
-
-export const useVoiceSession = () => {
-  const context = useContext(VoiceSessionContext);
-  if (!context) {
-    throw new Error('useVoiceSession must be used within a VoiceSessionProvider');
-  }
-  return context;
-};
-
-const MAX_RECONNECT_ATTEMPTS = 3;
-const RECONNECT_BASE_DELAY = 1000;
-
-export const VoiceSessionProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [state, setState] = useState<VoiceSessionState>({
-    status: 'idle',
-    transcript: '',
-    sttTiming: null,
-    isConnecting: false,
-    isConnected: false,
-    permissionRequest: null,
-    lastToolResult: null,
-    error: null,
-    audioLevel: 0,
-    optionsRequest: null,
-    roleSwitchRequest: null,
+function stopAudio(connection: VoiceConnection) {
+  connection.sources.forEach((source) => {
+    source.onended = null;
+    source.stop();
+    source.disconnect();
   });
+  connection.sources.clear();
+  connection.audioEnd = 0;
+  connection.playbackComplete = false;
+}
 
-  const wsRef = useRef<WebSocket | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const processorNodeRef = useRef<ScriptProcessorNode | null>(null);
-  const audioQueueRef = useRef<Float32Array[]>([]);
-  const isPlayingRef = useRef<boolean>(false);
-  const nextPlayTimeRef = useRef<number>(0);
-  const audioSourcesRef = useRef<AudioBufferSourceNode[]>([]);
-  const heartbeatIntervalRef = useRef<number | null>(null);
-  const reconnectAttemptsRef = useRef(0);
-  const sessionIdRef = useRef<string | undefined>(undefined);
-  const handleIncomingAudioChunkRef = useRef<(buffer: ArrayBuffer) => void>(() => {
-    throw new Error('Audio handler is not initialized');
-  });
+export function useVoiceSession(callbacks: VoiceCallbacks) {
+  const latest = useRef(callbacks);
+  latest.current = callbacks;
+  const connectionRef = useRef<VoiceConnection | null>(null);
+  const [status, setStatus] = useState<Status>('idle');
+  const [error, setError] = useState('');
 
-  const stopAllAudioPlayback = useCallback(() => {
-    audioSourcesRef.current.forEach((src) => {
-      try {
-        src.stop();
-      } catch {
-        // Already stopped
-      }
-    });
-    audioSourcesRef.current = [];
-    audioQueueRef.current = [];
-    isPlayingRef.current = false;
-    nextPlayTimeRef.current = 0;
+  const endSession = useCallback(() => {
+    const connection = connectionRef.current;
+    connectionRef.current = null;
+    if (connection) {
+      stopAudio(connection);
+      connection.worklet?.disconnect();
+      connection.stream?.getTracks().forEach((track) => track.stop());
+      connection.socket?.close();
+      void connection.audio.close().catch(() => undefined);
+    }
+    setStatus('idle');
   }, []);
 
-  const cleanupResources = useCallback(() => {
-    if (processorNodeRef.current) {
-      processorNodeRef.current.disconnect();
-      processorNodeRef.current = null;
-    }
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-      mediaStreamRef.current = null;
-    }
-    stopAllAudioPlayback();
-    if (heartbeatIntervalRef.current !== null) {
-      window.clearInterval(heartbeatIntervalRef.current);
-      heartbeatIntervalRef.current = null;
-    }
-  }, [stopAllAudioPlayback]);
+  useEffect(() => endSession, [endSession]);
 
-  const endSession = useCallback(
-    (clearError = true) => {
-      cleanupResources();
-
-      if (wsRef.current) {
-        if (wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ type: 'end_session' }));
-        }
-        wsRef.current.close();
-        wsRef.current = null;
-      }
-
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch((error: unknown) => {
-          console.error('Failed to close the audio context', error);
-        });
-        audioContextRef.current = null;
-      }
-
-      setState((prev) => ({
-        status: 'idle',
-        transcript: '',
-        sttTiming: null,
-        isConnecting: false,
-        isConnected: false,
-        permissionRequest: null,
-        lastToolResult: null,
-        error: clearError ? null : prev.error,
-        audioLevel: 0,
-        optionsRequest: null,
-        roleSwitchRequest: null,
-      }));
-    },
-    [cleanupResources]
-  );
-
-  const startSession = useCallback(
-    async (sessionId?: string) => {
-      if (wsRef.current) return;
-
-      sessionIdRef.current = sessionId;
-      reconnectAttemptsRef.current = 0;
-
-      setState((prev) => ({
-        ...prev,
-        isConnecting: true,
-        transcript: '',
-        error: null,
-        audioLevel: 0,
-      }));
-
-      const connect = async (): Promise<void> => {
-        try {
-          const AudioContextClass =
-            window.AudioContext ??
-            (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-          if (AudioContextClass === undefined) {
-            throw new Error('AudioContext is not supported in this browser');
-          }
-          const audioCtx = new AudioContextClass({ sampleRate: 16000 });
-          audioContextRef.current = audioCtx;
-
-          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-          const host = window.location.host;
-          let url = `${protocol}//${host}/api/v1/ws/voice`;
-          if (typeof sessionId === 'string' && sessionId.trim().length > 0) {
-            url += `?session_id=${sessionId}`;
-          }
-
-          const ws = new WebSocket(url);
-          wsRef.current = ws;
-          ws.binaryType = 'arraybuffer';
-
-          ws.onopen = async () => {
-            setState((prev) => ({ ...prev, isConnected: true, isConnecting: false }));
-            reconnectAttemptsRef.current = 0;
-
-            // Start heartbeat
-            heartbeatIntervalRef.current = window.setInterval(() => {
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'pong' }));
-              }
-            }, 25000);
-
-            try {
-              const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                  channelCount: 1,
-                  sampleRate: 16000,
-                  echoCancellation: true,
-                  noiseSuppression: true,
-                },
-              });
-              mediaStreamRef.current = stream;
-
-              const source = audioCtx.createMediaStreamSource(stream);
-              const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-              processorNodeRef.current = processor;
-
-              processor.onaudioprocess = (event) => {
-                const inputData = event.inputBuffer.getChannelData(0);
-
-                // AudioContext is usually 48000 Hz, backend expects 16000 Hz.
-                const inputRate = audioCtx.sampleRate;
-                const outputRate = 16000;
-                const ratio = inputRate / outputRate;
-
-                const outputLength = Math.floor(inputData.length / ratio);
-                const pcmData = new Int16Array(outputLength);
-
-                let sumSquares = 0;
-
-                for (let i = 0; i < outputLength; i++) {
-                  const srcIndex = Math.floor(i * ratio);
-                  const sample = inputData[srcIndex] ?? 0;
-
-                  sumSquares += sample * sample;
-
-                  pcmData[i] = Math.max(-32768, Math.min(32767, Math.round(sample * 32767)));
-                }
-
-                const rms = Math.sqrt(sumSquares / outputLength);
-                const level = Math.min(1, rms * 5);
-
-                setState((prev) => ({
-                  ...prev,
-                  audioLevel: level,
-                }));
-
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(pcmData.buffer);
-                }
-              };
-
-              source.connect(processor);
-              processor.connect(audioCtx.destination);
-            } catch {
-              endSession();
-            }
-          };
-
-          ws.onmessage = (event) => {
-            if (event.data instanceof ArrayBuffer) {
-              handleIncomingAudioChunkRef.current(event.data);
-            } else {
-              const data = JSON.parse(event.data) as VoiceMessage;
-              switch (data.type) {
-                case 'session_started':
-                  break;
-                case 'status':
-                  if (typeof data.status === 'string') {
-                    setState((prev) => ({
-                      ...prev,
-                      status: data.status as VoiceSessionState['status'],
-                    }));
-                  }
-                  break;
-                case 'partial_transcript':
-                  if (typeof data.text === 'string') {
-                    setState((prev) => ({
-                      ...prev,
-                      transcript: data.text as string,
-                      sttTiming: typeof data.timing === 'number' ? data.timing : null,
-                      optionsRequest: null,
-                      roleSwitchRequest: null,
-                    }));
-                  }
-                  break;
-                case 'options_request':
-                  if (typeof data.text === 'string') {
-                    setState((prev) => ({
-                      ...prev,
-                      status: 'speaking',
-                      transcript: data.text as string,
-                      optionsRequest: {
-                        text: data.text as string,
-                        options: Array.isArray(data.options) ? data.options : [],
-                        freeInputAllowed: data.free_input_allowed !== false,
-                        ...(typeof data.card_variant === 'string'
-                          ? { cardVariant: data.card_variant }
-                          : {}),
-                      },
-                    }));
-                  }
-                  break;
-                case 'toggle_theme':
-                  // Pure client-side toggle — dispatch the same event text chat uses
-                  window.dispatchEvent(new CustomEvent('agent-toggle-theme'));
-                  break;
-                case 'role_switch_request':
-                  if (typeof data.text === 'string') {
-                    setState((prev) => ({
-                      ...prev,
-                      status: 'speaking',
-                      transcript: data.text as string,
-                      roleSwitchRequest: {
-                        text: data.text as string,
-                        neededRole: (data.needed_role as string) || 'seller',
-                        originalTool: (data.original_tool as string) || '',
-                        options: Array.isArray(data.options) ? data.options : [],
-                      },
-                    }));
-                  }
-                  break;
-                case 'tool_result':
-                  if (typeof data.result === 'object' && data.result !== null) {
-                    setState((prev) => ({
-                      ...prev,
-                      lastToolResult: data.result as Record<string, unknown>,
-                    }));
-                  }
-                  break;
-                case 'response':
-                  if (typeof data.text === 'string') {
-                    setState((prev) => ({
-                      ...prev,
-                      status: 'speaking',
-                      transcript: data.text as string,
-                      optionsRequest: null,
-                      roleSwitchRequest: null,
-                    }));
-                  }
-                  if (typeof data.navigate_to === 'string' && data.navigate_to.trim().length > 0) {
-                    window.dispatchEvent(
-                      new CustomEvent('agent-navigate', {
-                        detail: {
-                          path: data.navigate_to,
-                          label:
-                            typeof data.navigate_label === 'string' &&
-                            data.navigate_label.trim().length > 0
-                              ? data.navigate_label
-                              : 'Navigating...',
-                        },
-                      })
-                    );
-                  }
-                  break;
-                case 'stop_playback':
-                  stopAllAudioPlayback();
-                  setState((prev) => ({ ...prev, status: 'idle' }));
-                  break;
-                case 'playback_ended':
-                  setState((prev) => ({ ...prev, status: 'idle' }));
-                  break;
-                case 'permission_request':
-                  setState((prev) => ({
-                    ...prev,
-                    status: 'waiting_permission',
-                    permissionRequest: {
-                      action:
-                        typeof data.action === 'string' && data.action.trim().length > 0
-                          ? data.action
-                          : 'unknown',
-                      summary: typeof data.summary === 'string' ? data.summary : '',
-                      payload: data.payload ?? null,
-                    },
-                  }));
-                  break;
-                case 'ping':
-                  if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ type: 'pong' }));
-                  }
-                  break;
-                default:
-                  break;
-              }
-            }
-          };
-
-          ws.onclose = async (event) => {
-            cleanupResources();
-            if (!event.wasClean && reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
-              reconnectAttemptsRef.current += 1;
-              const delay = RECONNECT_BASE_DELAY * reconnectAttemptsRef.current;
-              setState((prev) => ({ ...prev, isConnecting: true }));
-              await new Promise<void>((resolve) => {
-                window.setTimeout(resolve, delay);
-              });
-              await connect();
-            } else if (!event.wasClean) {
-              setState((prev) => ({
-                ...prev,
-                error: 'Voice server connection lost unexpectedly.',
-              }));
-              endSession(false);
-            } else {
-              endSession(true);
-            }
-          };
-
-          ws.onerror = () => {
-            setState((prev) => ({
-              ...prev,
-              error:
-                'Failed to connect to the voice server. Please verify if the backend is running.',
-            }));
-            endSession(false);
-          };
-        } catch {
-          endSession();
-        }
-      };
-
-      await connect();
-    },
-    [endSession, cleanupResources, stopAllAudioPlayback]
-  );
-
-  function handleIncomingAudioChunk(buffer: ArrayBuffer) {
-    const audioCtx = audioContextRef.current;
-    if (!audioCtx) return;
-
-    const int16Array = new Int16Array(buffer);
-    const float32Array = new Float32Array(int16Array.length);
-    for (let index = 0; index < int16Array.length; index += 1) {
-      const val = int16Array[index];
-      if (typeof val === 'number') {
-        float32Array[index] = val / 32768.0;
-      }
-    }
-
-    audioQueueRef.current.push(float32Array);
-    playNextQueueChunk();
-  }
-
-  handleIncomingAudioChunkRef.current = handleIncomingAudioChunk;
-
-  const playNextQueueChunk = () => {
-    const audioCtx = audioContextRef.current;
-    if (!audioCtx || isPlayingRef.current || audioQueueRef.current.length === 0) return;
-
-    isPlayingRef.current = true;
-    const chunk = audioQueueRef.current.shift();
-    if (!chunk) {
-      isPlayingRef.current = false;
+  const startSession = async (sessionId: string | null) => {
+    if (connectionRef.current) return;
+    setError('');
+    setStatus('connecting');
+    if (
+      typeof navigator.mediaDevices?.getUserMedia !== 'function' ||
+      typeof window.AudioContext !== 'function'
+    ) {
+      setError('Voice requires microphone access in a secure browser context.');
+      setStatus('idle');
       return;
     }
-
-    const audioBuffer = audioCtx.createBuffer(1, chunk.length, 16000);
-    audioBuffer.getChannelData(0).set(chunk);
-
-    const sourceNode = audioCtx.createBufferSource();
-    sourceNode.buffer = audioBuffer;
-    sourceNode.connect(audioCtx.destination);
-
-    audioSourcesRef.current.push(sourceNode);
-
-    let playTime = nextPlayTimeRef.current;
-    const now = audioCtx.currentTime;
-
-    if (playTime < now) {
-      playTime = now + 0.05;
-    }
-
-    sourceNode.start(playTime);
-    nextPlayTimeRef.current = playTime + audioBuffer.duration;
-
-    sourceNode.onended = () => {
-      audioSourcesRef.current = audioSourcesRef.current.filter((src) => src !== sourceNode);
-      isPlayingRef.current = false;
-      playNextQueueChunk();
+    const connection: VoiceConnection = {
+      audio: new AudioContext({ sampleRate: 16000 }),
+      stream: null,
+      worklet: null,
+      socket: null,
+      sampleRate: 16000,
+      acceptInput: false,
+      playbackComplete: false,
+      audioEnd: 0,
+      sources: new Set(),
     };
-  };
-
-  const sendPermissionResponse = (approved: boolean) => {
-    if (
-      wsRef.current &&
-      wsRef.current.readyState === WebSocket.OPEN &&
-      state.permissionRequest !== null
-    ) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: 'permission_response',
-          approved,
-          action: state.permissionRequest.action,
-          payload: state.permissionRequest.payload,
-        })
-      );
-      setState((prev) => ({ ...prev, permissionRequest: null, status: 'idle' }));
+    connectionRef.current = connection;
+    const current = () => connectionRef.current === connection;
+    try {
+      await connection.audio.resume();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+      if (!current()) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      connection.stream = stream;
+      await connection.audio.audioWorklet.addModule('/voice-capture.js');
+      if (!current()) return;
+      const input = connection.audio.createMediaStreamSource(stream);
+      const worklet = new AudioWorkletNode(connection.audio, 'voice-capture');
+      connection.worklet = worklet;
+      input.connect(worklet);
+      worklet.connect(connection.audio.destination);
+      const url = new URL('/api/v1/ws/voice', window.location.href);
+      url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      if (sessionId !== null) url.searchParams.set('session_id', sessionId);
+      const socket = new WebSocket(url);
+      socket.binaryType = 'arraybuffer';
+      connection.socket = socket;
+      worklet.port.onmessage = ({ data }: MessageEvent<ArrayBuffer>) => {
+        if (
+          current() &&
+          connection.acceptInput &&
+          socket.readyState === WebSocket.OPEN &&
+          socket.bufferedAmount < 32768
+        ) {
+          socket.send(data);
+        }
+      };
+      const resumeListening = () => {
+        if (
+          !current() ||
+          !connection.playbackComplete ||
+          connection.sources.size > 0 ||
+          socket.readyState !== WebSocket.OPEN
+        )
+          return;
+        connection.playbackComplete = false;
+        socket.send(JSON.stringify({ type: 'playback_complete' }));
+        connection.acceptInput = true;
+        setStatus('listening');
+      };
+      socket.onmessage = ({ data }: MessageEvent<unknown>) => {
+        if (!current()) return;
+        if (data instanceof ArrayBuffer && data.byteLength > 0 && data.byteLength % 2 === 0) {
+          const pcm = new Int16Array(data);
+          const buffer = connection.audio.createBuffer(1, pcm.length, connection.sampleRate);
+          buffer.getChannelData(0).set(Float32Array.from(pcm, (sample) => sample / 32768));
+          const playback = connection.audio.createBufferSource();
+          playback.buffer = buffer;
+          playback.connect(connection.audio.destination);
+          const start = Math.max(connection.audio.currentTime + 0.015, connection.audioEnd);
+          connection.audioEnd = start + buffer.duration;
+          connection.sources.add(playback);
+          playback.onended = () => {
+            playback.disconnect();
+            connection.sources.delete(playback);
+            resumeListening();
+          };
+          playback.start(start);
+          setStatus('speaking');
+          return;
+        }
+        if (typeof data !== 'string') return;
+        const frame = JSON.parse(data) as WireMessage;
+        switch (frame.type) {
+          case 'session_started':
+            if (typeof frame.session_id === 'string') latest.current.session(frame.session_id);
+            break;
+          case 'status':
+            connection.acceptInput = false;
+            if (frame.status !== undefined) setStatus(frame.status);
+            break;
+          case 'partial_transcript':
+            if (typeof frame.text === 'string' && frame.text.length > 0)
+              latest.current.speech(frame.text);
+            break;
+          case 'response':
+          case 'permission_request':
+            latest.current.event(frame);
+            break;
+          case 'audio_format':
+            if (
+              typeof frame.sample_rate === 'number' &&
+              frame.sample_rate >= 8000 &&
+              frame.sample_rate <= 48000
+            ) {
+              connection.sampleRate = frame.sample_rate;
+            }
+            break;
+          case 'playback_ended':
+            connection.playbackComplete = true;
+            resumeListening();
+            break;
+          case 'stop_playback':
+            stopAudio(connection);
+            connection.acceptInput = true;
+            setStatus('listening');
+            break;
+          case 'voice_error':
+            setError(frame.text ?? 'Voice is unavailable. Continue in Text Mode.');
+            endSession();
+            break;
+        }
+      };
+      socket.onclose = () => {
+        if (!current()) return;
+        setError('Voice ended. Start it again or continue in Text Mode.');
+        endSession();
+      };
+    } catch {
+      if (current()) {
+        setError('Microphone or audio setup failed. Check browser permissions or use Text Mode.');
+        endSession();
+      }
     }
   };
 
-  const sendTextMessage = (text: string) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: 'free_input',
-          text,
-        })
-      );
-    }
+  function send(frame: object) {
+    const connection = connectionRef.current;
+    if (connection?.socket?.readyState !== WebSocket.OPEN) return;
+    connection.socket.send(JSON.stringify(frame));
+  }
+
+  return {
+    status,
+    error,
+    startSession,
+    endSession,
+    interrupt: () => send({ type: 'interrupt' }),
+    confirm: (id: string, approved: boolean) =>
+      send({ type: 'permission_response', confirmation_id: id, approved }),
   };
-
-  useEffect(() => {
-    return () => {
-      endSession();
-    };
-  }, [endSession]);
-
-  return (
-    <VoiceSessionContext.Provider
-      value={{
-        state,
-        startSession,
-        endSession,
-        sendPermissionResponse,
-        sendTextMessage,
-      }}
-    >
-      {children}
-    </VoiceSessionContext.Provider>
-  );
-};
+}

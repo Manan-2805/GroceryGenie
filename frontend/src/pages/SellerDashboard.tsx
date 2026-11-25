@@ -11,10 +11,14 @@ import { Link } from 'react-router-dom';
 
 import { orderService, productService, Product, Order } from '../services/api';
 
+import { formatINR, getSellerReport } from './SellerAnalysis';
+
 export const SellerDashboard: React.FC = () => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [lowStockProducts, setLowStockProducts] = useState<Product[]>([]);
   const [totalProductsCount, setTotalProductsCount] = useState(0);
+  const [sales, setSales] = useState<string | null>(null);
+  const [pending, setPending] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchDashboardData = async () => {
@@ -24,6 +28,9 @@ export const SellerDashboard: React.FC = () => {
       const ordersData = await orderService.listSellerQueue(1, 5);
       setOrders(ordersData.items);
 
+      const report = await getSellerReport('month');
+      setSales(report.revenue);
+      setPending((await orderService.listSellerQueue(1, 1, 'pending')).total);
       // 2. Fetch low stock products (page 1, limit 5)
       const lowStockData = await productService.listSeller(undefined, undefined, 'low', 1, 5);
       setLowStockProducts(lowStockData.items);
@@ -49,8 +56,6 @@ export const SellerDashboard: React.FC = () => {
   }, []);
 
   // Compute stats
-  const totalSales = orders.reduce((sum, o) => sum + (o.status === 'delivered' ? o.total : 0), 0);
-  const activeOrdersCount = orders.filter((o) => o.status !== 'delivered').length;
 
   if (loading) {
     return <div className="p-8 text-center text-gray-400">Loading seller dashboard...</div>;
@@ -82,7 +87,7 @@ export const SellerDashboard: React.FC = () => {
             </div>
             <div className="mt-4">
               <p className="text-2xl font-semibold text-gray-800 dark:text-gray-200">
-                €{totalSales.toFixed(2)}
+                {sales === null ? 'Unavailable' : formatINR(sales)}
               </p>
               <p className="text-[10px] text-gray-400 mt-1 font-semibold">
                 From completed delivered orders
@@ -100,7 +105,9 @@ export const SellerDashboard: React.FC = () => {
               </span>
             </div>
             <div className="mt-4">
-              <p className="text-2xl font-semibold text-amber-500">{activeOrdersCount} Pending</p>
+              <p className="text-2xl font-semibold text-amber-500">
+                {pending === null ? 'Unavailable' : `${pending} pending`}
+              </p>
               <p className="text-[10px] text-gray-400 mt-1 font-semibold">
                 Orders awaiting delivery status updates
               </p>
@@ -166,7 +173,7 @@ export const SellerDashboard: React.FC = () => {
                     </div>
                     <div className="text-right">
                       <p className="font-semibold text-gray-800 dark:text-gray-200">
-                        €{order.total.toFixed(2)}
+                        ₹{order.total.toFixed(2)}
                       </p>
                       <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-amber-50 text-amber-600 dark:bg-amber-950/20 dark:text-amber-400 uppercase mt-1 inline-block">
                         {order.status.replace(/_/g, ' ')}

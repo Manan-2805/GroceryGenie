@@ -244,7 +244,7 @@ export const Orders: React.FC = () => {
       header: 'Total Value',
       sortable: true,
       render: (val) => (
-        <span className="font-bold text-accent dark:text-accent">€{Number(val).toFixed(2)}</span>
+        <span className="font-bold text-accent dark:text-accent">₹{Number(val).toFixed(2)}</span>
       ),
     },
     {
@@ -456,14 +456,14 @@ export const Orders: React.FC = () => {
                                   : 'Unknown Product'}
                               </p>
                               <p className="text-[10px] text-gray-500 font-semibold">
-                                €{item.price_at_purchase.toFixed(2)} × {item.quantity}
+                                ₹{item.price_at_purchase.toFixed(2)} × {item.quantity}
                               </p>
                             </div>
                           </div>
 
                           <div className="flex flex-col md:items-end gap-2">
                             <span className="font-bold text-xs text-accent dark:text-accent">
-                              Subtotal: €{(item.price_at_purchase * item.quantity).toFixed(2)}
+                              Subtotal: ₹{(item.price_at_purchase * item.quantity).toFixed(2)}
                             </span>
 
                             {/* Ratings Section for Delivered Orders */}

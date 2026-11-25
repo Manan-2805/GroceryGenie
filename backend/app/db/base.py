@@ -47,6 +47,12 @@ class Base(AsyncAttrs, DeclarativeBase):
 engine = create_async_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=5,
+    pool_timeout=3,
+    connect_args={
+        "server_settings": {"statement_timeout": "8000", "lock_timeout": "4000"}
+    },
     future=True,
 )
 

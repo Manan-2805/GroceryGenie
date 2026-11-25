@@ -130,7 +130,7 @@ export const FulfillmentQueue: React.FC = () => {
       header: 'Total Value',
       sortable: true,
       render: (val) => (
-        <span className="font-bold text-accent dark:text-accent">€{Number(val).toFixed(2)}</span>
+        <span className="font-bold text-accent dark:text-accent">₹{Number(val).toFixed(2)}</span>
       ),
     },
     {
@@ -368,7 +368,7 @@ export const FulfillmentQueue: React.FC = () => {
                               : 'Unknown Product'}
                           </p>
                           <p className="text-[10px] text-gray-500 font-semibold">
-                            €{item.price_at_purchase.toFixed(2)} each
+                            ₹{item.price_at_purchase.toFixed(2)} each
                           </p>
                         </div>
                       </div>
@@ -377,7 +377,7 @@ export const FulfillmentQueue: React.FC = () => {
                           Qty: {item.quantity}
                         </p>
                         <p className="text-[10px] text-gray-400">
-                          Subtotal: €{(item.price_at_purchase * item.quantity).toFixed(2)}
+                          Subtotal: ₹{(item.price_at_purchase * item.quantity).toFixed(2)}
                         </p>
                       </div>
                     </div>
