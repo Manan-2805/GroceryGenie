@@ -1,0 +1,93 @@
+name: Quality and CPU images
+
+on:
+  push:
+    branches: [audit/project-recovery, main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      E2E_BASE_URL: http://localhost:5173
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare integration credentials
+        env:
+          POSTGRES_PASSWORD: ${{ github.event_name == 'push' && secrets.POSTGRES_PASSWORD || '' }}
+          SESSION_SIGNING_KEY: ${{ github.event_name == 'push' && secrets.SESSION_SIGNING_KEY || '' }}
+        run: bash .github/scripts/ci-credentials.sh integration
+      - name: Start integration PostgreSQL
+        run: |
+          export POSTGRES_USER=postgres POSTGRES_DB=grocergenie_test
+          docker run --detach --rm --name grocergenie-ci-db \
+            --publish 127.0.0.1:5432:5432 --tmpfs /var/lib/postgresql/data \
+            --env POSTGRES_USER --env POSTGRES_DB --env POSTGRES_PASSWORD postgres:16.16-alpine
+          timeout 65 bash -c 'until docker exec grocergenie-ci-db pg_isready -q -h 127.0.0.1 -U postgres -d grocergenie_test; do sleep 1; done'
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.23.5
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.13.9
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv python install 3.12.16
+      - run: make install lint format
+      - run: make migrate
+      - run: uv run --locked alembic check
+        working-directory: backend
+      - run: make coverage security
+      - run: npm run build
+        working-directory: frontend
+      - run: uv run --locked playwright install --with-deps chromium
+        working-directory: backend
+      - name: Run real Chromium browser scenarios
+        run: |
+          (cd backend && uv run --locked uvicorn app.main:app --port 8000 --no-access-log) > /tmp/grocergenie-api.log 2>&1 &
+          (cd frontend && npm run dev -- --host localhost --port 5173 --strictPort) > /tmp/grocergenie-web.log 2>&1 &
+          curl --retry 20 --retry-connrefused --retry-delay 1 --fail --silent http://localhost:5173/api/v1/health
+          make test-e2e
+
+  images:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare Compose credentials
+        env:
+          POSTGRES_PASSWORD: ${{ github.event_name == 'push' && secrets.POSTGRES_PASSWORD || '' }}
+          SESSION_SIGNING_KEY: ${{ github.event_name == 'push' && secrets.SESSION_SIGNING_KEY || '' }}
+        run: bash .github/scripts/ci-credentials.sh compose
+      - run: docker compose config --quiet
+      - run: docker compose build backend web
+      - run: docker compose up -d --no-build --wait --wait-timeout 90
+      - run: curl --fail --silent http://localhost:8080/api/v1/health
+      - name: Scan built backend and web images
+        run: |
+          for image in grocergenie-backend:local grocergenie-web:local; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 "$image"
+          done
+      - name: Publish the verified images to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/audit/project-recovery'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          for part in backend web; do
+            docker tag "grocergenie-${part}:local" "${prefix}-${part}:${SHA}"
+            docker push "${prefix}-${part}:${SHA}"
+          done

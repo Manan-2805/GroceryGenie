@@ -7,47 +7,42 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.18.5",
     "asyncpg>=0.31.0",
-    "authlib>=1.7.2",
+    "authlib>=1.9.1",
     "fastapi>=0.138.2",
-    "granian>=2.0.0",
     "httpx>=0.28.1",
     "itsdangerous>=2.2.0",
-    "mcp>=1.28.1",
-    "neo4j>=6.2.0",
     "numpy>=2.4.6",
-    "onnx-asr[hub]>=0.11.0; sys_platform == 'win32'",
-    "onnx-asr[hub]>=0.11.0; sys_platform != 'win32'",
-    "onnxruntime-directml>=1.24.4; sys_platform == 'win32'",
-    "onnxruntime-gpu; sys_platform != 'win32'",
-    "openai>=2.44.0",
-    "pipecat-ai[silero]>=1.4.0",
+    "onnx-asr==0.11.0",
+    "onnxruntime>=1.27,<2",
+    "pillow>=13,<14",
+    "python-multipart>=0.0.30",
     "piper-tts>=1.4.2",
     "pydantic-settings>=2.14.2",
-    "pydub>=0.25.1",
-    "python-json-logger>=4.1.0",
-    "qdrant-client>=1.18.0",
-    "redis>=8.0.1",
-    "sentence-transformers>=5.6.0",
-    "slowapi>=0.1.10",
-    "sounddevice>=0.5.5",
-    "soundfile>=0.14.0",
     "sqlalchemy>=2.0.51",
-    "torch>=2.0.0",
     "uvicorn[standard]>=0.49.0",
-    "pyjwt[crypto]>=2.13.0",
-    "nvidia-ml-py3>=7.352.0",
 ]
 
 [dependency-groups]
 dev = [
-    "aiosqlite>=0.20.0",
     "bandit>=1.9.4",
     "mypy>=2.1.0",
     "pip-audit>=2.10.1",
     "pytest>=9.1.1",
+    "pytest-cov>=7,<8",
     "pytest-asyncio>=1.4.0",
     "ruff>=0.15.20",
     "playwright",
+]
+
+[tool.uv]
+constraint-dependencies = [
+    "certifi>=2026.10.18",
+    "cryptography>=50.0.0",
+    "filelock>=4.2.1",
+    "joserfc>=1.7.6",
+    "msgpack>=1.2.3",
+    "pip>=26.2",
+    "urllib3>=2.8.0",
 ]
 
 [tool.ruff]
@@ -62,15 +57,11 @@ ignore = ["E501", "PLR2004", "B008", "PLR0912", "PLR0915", "PLC0415", "PLW0603",
 strict = true
 python_version = "3.12"
 ignore_missing_imports = true
-# Suppress pre-existing type errors in model references (will be fixed separately)
-[[tool.mypy.overrides]]
-module = "app.services.agent.tools.*"
-ignore_errors = true
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
+    "postgres: integration tests using a disposable PostgreSQL database",
     "e2e: end-to-end tests that require running backend/frontend services and browser",
 ]
 addopts = "--ignore=tests/e2e"

@@ -7,6 +7,11 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.core.config import settings
 
+
+def utc_now() -> datetime.datetime:
+    return datetime.datetime.now(datetime.UTC)
+
+
 # Explicit metadata naming convention for Alembic migration names
 convention = {
     "ix": "ix_%(column_0_label)s",
@@ -25,12 +30,12 @@ class Base(AsyncAttrs, DeclarativeBase):
         primary_key=True, default=uuid.uuid4, index=True
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow
+        DateTime(timezone=True), default=utc_now
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
-        default=datetime.datetime.utcnow,
-        onupdate=datetime.datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
     updated_by: Mapped[str] = mapped_column(
         String(255), default="system", nullable=False
@@ -40,8 +45,14 @@ class Base(AsyncAttrs, DeclarativeBase):
 
 # Async database engine and session maker
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    settings.database_url,
     pool_pre_ping=True,
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=5,
+    pool_timeout=3,
+    connect_args={
+        "server_settings": {"statement_timeout": "8000", "lock_timeout": "4000"}
+    },
     future=True,
 )
 

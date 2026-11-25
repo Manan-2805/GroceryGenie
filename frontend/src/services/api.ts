@@ -1,20 +1,7 @@
 import axios from 'axios';
 
-import { useUIStore } from '../store/uiStore';
-
 // Detect base API URL
 const BASE_URL = '/api/v1';
-
-type ApiError = Error & {
-  response?: {
-    data?: {
-      detail?: unknown;
-    };
-    status?: number;
-  };
-  code?: string;
-  message?: string;
-};
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -27,6 +14,9 @@ const isApiResponse = <T>(payload: ApiResponse<T> | T): payload is ApiResponse<T
 };
 
 const extractApiData = <T>(payload: ApiResponse<T> | T): T => {
+  if (typeof payload === 'string' || payload === null || payload === undefined) {
+    return null as unknown as T;
+  }
   return isApiResponse(payload) ? payload.data : payload;
 };
 
@@ -38,56 +28,35 @@ export const api = axios.create({
   },
 });
 
-api.interceptors.response.use(
-  (response) => {
-    const convertNumericFields = (value: unknown): unknown => {
-      if (value === null || value === undefined) return value;
-      if (Array.isArray(value)) {
-        return value.map((item) => convertNumericFields(item));
-      }
-      if (typeof value === 'object') {
-        const record = value as UnknownRecord;
-        const converted: UnknownRecord = {};
-        for (const [key, item] of Object.entries(record)) {
-          if (
-            ['price', 'total', 'avg_rating', 'price_at_purchase'].includes(key) &&
-            item !== null &&
-            item !== undefined
-          ) {
-            const numericValue = typeof item === 'number' ? item : Number(item);
-            converted[key] = Number.isFinite(numericValue) ? numericValue : item;
-          } else {
-            converted[key] = convertNumericFields(item);
-          }
-        }
-        return converted;
-      }
-      return value;
-    };
-
-    response.data = convertNumericFields(response.data);
-    return response;
-  },
-  (error: unknown) => {
-    const axiosError = error as ApiError;
-    if (
-      !axiosError.response ||
-      axiosError.code === 'ERR_NETWORK' ||
-      axiosError.message === 'Network Error'
-    ) {
-      useUIStore.getState().setBackendUnreachable(true);
-    } else if (
-      typeof axiosError.response?.status === 'number' &&
-      axiosError.response.status >= 500
-    ) {
-      const detail = axiosError.response.data?.detail ?? axiosError.message;
-      useUIStore
-        .getState()
-        .setAppError(typeof detail === 'string' ? detail : JSON.stringify(detail));
+api.interceptors.response.use((response) => {
+  const convertNumericFields = (value: unknown): unknown => {
+    if (value === null || value === undefined) return value;
+    if (Array.isArray(value)) {
+      return value.map((item) => convertNumericFields(item));
     }
-    return Promise.reject(error);
-  }
-);
+    if (typeof value === 'object') {
+      const record = value as UnknownRecord;
+      const converted: UnknownRecord = {};
+      for (const [key, item] of Object.entries(record)) {
+        if (
+          ['price', 'total', 'avg_rating', 'price_at_purchase'].includes(key) &&
+          item !== null &&
+          item !== undefined
+        ) {
+          const numericValue = typeof item === 'number' ? item : Number(item);
+          converted[key] = Number.isFinite(numericValue) ? numericValue : item;
+        } else {
+          converted[key] = convertNumericFields(item);
+        }
+      }
+      return converted;
+    }
+    return value;
+  };
+
+  response.data = convertNumericFields(response.data);
+  return response;
+});
 
 export type UserProfile = {
   id: string;
@@ -108,6 +77,14 @@ export type Product = {
   avg_rating: number;
   sold_count: number;
   is_active: boolean;
+  brand?: string;
+  package?: string;
+  cost_price?: string;
+  ingredients?: string | null;
+  dietary_tags?: string[] | null;
+  allergens?: string[] | null;
+  nutrition?: Record<string, string> | null;
+  label_source?: string | null;
 };
 
 export type CartItem = {
@@ -134,6 +111,7 @@ export type OrderItem = {
   product_id?: string;
   quantity: number;
   price_at_purchase: number;
+  fulfillment_status?: Order['status'];
   product?: {
     id: string;
     name: string;
@@ -154,6 +132,13 @@ export type Order = {
   out_for_delivery_at: string | null;
   delivered_at: string | null;
   items: OrderItem[];
+  fulfillments?: {
+    id: string;
+    seller_id: string;
+    status: Order['status'];
+    total: number;
+    items: OrderItem[];
+  }[];
 };
 
 export type PersistentFact = {
@@ -176,45 +161,13 @@ export type Address = {
   is_default: boolean;
 };
 
-export type AuthResponse = {
-  role: string;
-  name: string;
-};
-
-export type HealthStatus = {
-  voice_ok: boolean;
-  status: string;
-  [key: string]: unknown;
-};
-
-const isWrappedHealthStatus = (
-  payload: ApiResponse<HealthStatus> | HealthStatus
-): payload is ApiResponse<HealthStatus> => {
-  if (typeof payload !== 'object' || payload === null) return false;
-  if (!('data' in payload)) return false;
-  const maybeData = payload.data;
-  return typeof maybeData === 'object' && maybeData !== null;
-};
-
 export const authService = {
   getMe: async (): Promise<UserProfile> => {
     const res = await api.get<ApiResponse<UserProfile> | UserProfile>('/auth/me');
     return extractApiData(res.data);
   },
-  register: async (data: UnknownRecord): Promise<AuthResponse> => {
-    const res = await api.post<ApiResponse<AuthResponse> | AuthResponse>('/auth/register', data);
-    return extractApiData(res.data);
-  },
-  login: async (data: UnknownRecord): Promise<AuthResponse> => {
-    const res = await api.post<ApiResponse<AuthResponse> | AuthResponse>('/auth/login', data);
-    return extractApiData(res.data);
-  },
   logout: async (): Promise<void> => {
     await api.post('/auth/logout');
-  },
-  devBypass: async (): Promise<AuthResponse> => {
-    const res = await api.post<ApiResponse<AuthResponse> | AuthResponse>('/auth/dev-bypass');
-    return extractApiData(res.data);
   },
   switchRole: async (role: 'customer' | 'seller'): Promise<{ role: string }> => {
     const res = await api.patch<ApiResponse<{ role: string }> | { role: string }>(
@@ -237,7 +190,8 @@ export const productService = {
     onlyInStock?: boolean,
     search?: string,
     sortBy?: string,
-    sortDir?: string
+    sortDir?: string,
+    signal?: AbortSignal
   ): Promise<{
     items: Product[];
     total: number;
@@ -254,6 +208,7 @@ export const productService = {
         pages: number;
       }>
     >('/products', {
+      ...(signal ? { signal } : {}),
       params: {
         category,
         featured,
@@ -312,7 +267,18 @@ export const productService = {
     const res = await api.post<ApiResponse<Product>>('/products', data);
     return extractApiData(res.data);
   },
-  update: async (id: string, data: Partial<Product>): Promise<Product> => {
+  addStock: async (id: string, quantity: number, key: string): Promise<Product> => {
+    const res = await api.post<Product>(
+      `/products/${id}/stock`,
+      { quantity },
+      { headers: { 'Idempotency-Key': key } }
+    );
+    return res.data;
+  },
+  update: async (
+    id: string,
+    data: Partial<Product> & { expected_stock?: number }
+  ): Promise<Product> => {
     const res = await api.put<ApiResponse<Product>>(`/products/${id}`, data);
     return extractApiData(res.data);
   },
@@ -326,8 +292,16 @@ export const cartService = {
     const res = await api.get<ApiResponse<CartItem[]>>('/cart');
     return extractApiData(res.data);
   },
-  add: async (productId: string, quantity = 1): Promise<CartItem> => {
-    const res = await api.post<ApiResponse<CartItem>>('/cart', { product_id: productId, quantity });
+  add: async (
+    productId: string,
+    quantity = 1,
+    key = window.crypto.randomUUID()
+  ): Promise<CartItem> => {
+    const res = await api.post<ApiResponse<CartItem>>(
+      '/cart',
+      { product_id: productId, quantity },
+      { headers: { 'Idempotency-Key': key } }
+    );
     return extractApiData(res.data);
   },
   update: async (productId: string, quantity: number): Promise<CartItem> => {
@@ -339,9 +313,34 @@ export const cartService = {
   },
 };
 
+export type CheckoutQuote = {
+  id: string;
+  total: number | string;
+  expires_at: string;
+  lines: {
+    product_id: string;
+    name: string;
+    package: string;
+    quantity: number;
+    price: number | string;
+  }[];
+};
 export const orderService = {
-  place: async (address: UnknownRecord): Promise<Order> => {
-    const res = await api.post<ApiResponse<Order>>('/orders', { delivery_address: address });
+  quote: async (
+    payload: { address_id: string } | { delivery_address: Record<string, string> }
+  ): Promise<CheckoutQuote> => {
+    const res = await api.post<ApiResponse<CheckoutQuote> | CheckoutQuote>(
+      '/orders/quotes',
+      payload
+    );
+    return extractApiData(res.data);
+  },
+  place: async (quoteId: string, key: string): Promise<Order> => {
+    const res = await api.post<ApiResponse<Order>>(
+      '/orders',
+      { quote_id: quoteId },
+      { headers: { 'Idempotency-Key': key } }
+    );
     return extractApiData(res.data);
   },
   list: async (
@@ -371,7 +370,8 @@ export const orderService = {
   },
   listSellerQueue: async (
     page = 1,
-    limit = 10
+    limit = 10,
+    state?: 'pending'
   ): Promise<{
     items: Order[];
     total: number;
@@ -387,7 +387,7 @@ export const orderService = {
         limit: number;
         pages: number;
       }>
-    >('/orders/seller/queue', { params: { page, limit } });
+    >('/orders/seller/queue', { params: { page, limit, pending_only: state === 'pending' } });
     return extractApiData(res.data);
   },
   updateStatus: async (id: string, status: string): Promise<Order> => {
@@ -423,16 +423,5 @@ export const addressService = {
   },
   delete: async (id: string): Promise<void> => {
     await api.delete(`/addresses/${id}`);
-  },
-};
-
-export const healthService = {
-  checkApiHealth: async (): Promise<HealthStatus> => {
-    const res = await api.get<ApiResponse<HealthStatus> | HealthStatus>('/health');
-    const payload = res.data;
-    if (isWrappedHealthStatus(payload)) {
-      return payload.data;
-    }
-    return payload;
   },
 };

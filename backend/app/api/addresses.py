@@ -1,10 +1,12 @@
-import uuid
+from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, StringConstraints
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.commerce.checkout import DeliveryAddress, lock_customer
 from app.core.dependencies import get_current_customer, get_db
 from app.db.models.address import Address
 from app.db.models.user import User
@@ -12,160 +14,149 @@ from app.db.models.user import User
 router = APIRouter(prefix="/addresses", tags=["Addresses"])
 
 
-# Pydantic Schemas
-class AddressResponse(BaseModel):
-    id: uuid.UUID
-    user_id: uuid.UUID
-    label: str
-    line1: str
-    line2: str | None
-    city: str
-    state: str
-    postal_code: str
-    country: str
-    is_default: bool
-
-    class Config:
-        from_attributes = True
-
-
-class AddressCreate(BaseModel):
-    label: str
-    line1: str
-    line2: str | None = None
-    city: str
-    state: str
-    postal_code: str
-    country: str
+class AddressCreate(DeliveryAddress):
     is_default: bool = False
 
 
+class AddressResponse(AddressCreate):
+    id: UUID
+    user_id: UUID
+
+
 class AddressUpdate(BaseModel):
-    label: str | None = None
-    line1: str | None = None
-    line2: str | None = None
-    city: str | None = None
-    state: str | None = None
-    postal_code: str | None = None
-    country: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    label: Annotated[str, StringConstraints(min_length=1, max_length=100)] | None = None
+    line1: Annotated[str, StringConstraints(min_length=1, max_length=255)] | None = None
+    line2: Annotated[str, StringConstraints(max_length=255)] | None = None
+    city: Annotated[str, StringConstraints(min_length=1, max_length=100)] | None = None
+    state: Annotated[str, StringConstraints(min_length=1, max_length=100)] | None = None
+    postal_code: (
+        Annotated[str, StringConstraints(min_length=3, max_length=20)] | None
+    ) = None
+    country: Annotated[str, StringConstraints(min_length=1, max_length=100)] | None = (
+        None
+    )
     is_default: bool | None = None
+
+
+async def owned_address(db: AsyncSession, user_id: UUID, address_id: UUID) -> Address:
+    address = await db.scalar(
+        select(Address).where(Address.id == address_id, Address.user_id == user_id)
+    )
+    if address is None:
+        raise HTTPException(404, "Address not found.")
+    return address
+
+
+async def add_address(
+    db: AsyncSession, user_id: UUID, payload: AddressCreate
+) -> Address:
+    await lock_customer(db, user_id)
+    existing_id = await db.scalar(
+        select(Address.id).where(Address.user_id == user_id).limit(1)
+    )
+    is_default = payload.is_default or existing_id is None
+    if is_default:
+        await db.execute(
+            update(Address).where(Address.user_id == user_id).values(is_default=False)
+        )
+    address = Address(
+        user_id=user_id,
+        is_default=is_default,
+        **payload.model_dump(exclude={"is_default"}),
+    )
+    db.add(address)
+    await db.flush()
+    return address
+
+
+async def modify_address(
+    db: AsyncSession, user_id: UUID, address_id: UUID, payload: AddressUpdate
+) -> Address:
+    await lock_customer(db, user_id)
+    address = await owned_address(db, user_id, address_id)
+    changes = payload.model_dump(exclude_unset=True)
+    if any(value is None and key != "line2" for key, value in changes.items()):
+        raise HTTPException(422, "Required address fields cannot be cleared.")
+    if changes.get("is_default") is True and not address.is_default:
+        await db.execute(
+            update(Address).where(Address.user_id == user_id).values(is_default=False)
+        )
+    if address.is_default and changes.get("is_default") is False:
+        raise HTTPException(409, "Choose a different default address instead.")
+    normalized = DeliveryAddress.model_validate(
+        DeliveryAddress.model_validate(address).model_dump()
+        | {key: value for key, value in changes.items() if key != "is_default"}
+    )
+    for key, value in normalized.model_dump().items():
+        setattr(address, key, value)
+    if changes.get("is_default") is True:
+        address.is_default = True
+    await db.flush()
+    return address
+
+
+async def remove_address(db: AsyncSession, user_id: UUID, address_id: UUID) -> None:
+    await lock_customer(db, user_id)
+    address = await owned_address(db, user_id, address_id)
+    was_default = address.is_default
+    await db.delete(address)
+    await db.flush()
+    if was_default:
+        replacement = await db.scalar(
+            select(Address)
+            .where(Address.user_id == user_id)
+            .order_by(Address.created_at, Address.id)
+            .limit(1)
+        )
+        if replacement is not None:
+            replacement.is_default = True
+            await db.flush()
 
 
 @router.get("", response_model=list[AddressResponse])
 async def list_addresses(
     user: User = Depends(get_current_customer), db: AsyncSession = Depends(get_db)
 ) -> list[Address]:
-    """Retrieve all addresses for the authenticated user."""
-    result = await db.execute(
-        select(Address)
-        .where(Address.user_id == user.id)
-        .order_by(Address.is_default.desc(), Address.created_at.desc())
+    return list(
+        await db.scalars(
+            select(Address)
+            .where(Address.user_id == user.id)
+            .order_by(Address.is_default.desc(), Address.created_at)
+        )
     )
-    return list(result.scalars().all())
 
 
-@router.post("", response_model=AddressResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=AddressResponse, status_code=201)
 async def create_address(
     payload: AddressCreate,
     user: User = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
 ) -> Address:
-    """Create a new address for the authenticated user."""
-    # Check if this is the first address
-    count_res = await db.execute(select(Address).where(Address.user_id == user.id))
-    is_first = len(count_res.scalars().all()) == 0
-
-    is_default = payload.is_default or is_first
-
-    if is_default:
-        # Set all other user addresses to not default
-        await db.execute(
-            update(Address).where(Address.user_id == user.id).values(is_default=False)
-        )
-
-    address = Address(
-        user_id=user.id,
-        label=payload.label,
-        line1=payload.line1,
-        line2=payload.line2,
-        city=payload.city,
-        state=payload.state,
-        postal_code=payload.postal_code,
-        country=payload.country,
-        is_default=is_default,
-    )
-    db.add(address)
+    address = await add_address(db, user.id, payload)
     await db.commit()
-    await db.refresh(address)
     return address
 
 
 @router.put("/{address_id}", response_model=AddressResponse)
 async def update_address(
-    address_id: uuid.UUID,
+    address_id: UUID,
     payload: AddressUpdate,
     user: User = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
 ) -> Address:
-    """Update an existing address."""
-    result = await db.execute(
-        select(Address).where(Address.id == address_id, Address.user_id == user.id)
-    )
-    address = result.scalar_one_or_none()
-    if not address:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Address not found.",
-        )
-
-    # Check if default status is changing to True
-    if payload.is_default is True:
-        # Set all other user addresses to not default
-        await db.execute(
-            update(Address).where(Address.user_id == user.id).values(is_default=False)
-        )
-
-    # Apply updates
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(address, field, value)
-
+    address = await modify_address(db, user.id, address_id, payload)
     await db.commit()
-    await db.refresh(address)
     return address
 
 
 @router.delete("/{address_id}")
 async def delete_address(
-    address_id: uuid.UUID,
+    address_id: UUID,
     user: User = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """Delete an address."""
-    result = await db.execute(
-        select(Address).where(Address.id == address_id, Address.user_id == user.id)
-    )
-    address = result.scalar_one_or_none()
-    if not address:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Address not found.",
-        )
-
-    was_default = address.is_default
-    await db.delete(address)
+    await remove_address(db, user.id, address_id)
     await db.commit()
-
-    # If we deleted the default address, promote another one to default
-    if was_default:
-        fallback_res = await db.execute(
-            select(Address)
-            .where(Address.user_id == user.id)
-            .order_by(Address.created_at.desc())
-            .limit(1)
-        )
-        fallback = fallback_res.scalar_one_or_none()
-        if fallback:
-            fallback.is_default = True
-            await db.commit()
-
-    return {"status": "success", "detail": "Address deleted successfully."}
+    return {"status": "success"}

@@ -2,7 +2,7 @@ import { Trash2, MapPin, Plus, Check, PenLine } from 'lucide-react';
 import React, { useCallback, useEffect, useState } from 'react';
 
 import { DataTable } from '../components/DataTable';
-import { memoryService, PersistentFact, addressService, Address } from '../services/api';
+import { api, memoryService, PersistentFact, addressService, Address } from '../services/api';
 import { useUIStore } from '../store/uiStore';
 
 type SettingsProps = {
@@ -19,6 +19,8 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
   const { theme, setTheme } = useUIStore();
 
   const [facts, setFacts] = useState<PersistentFact[]>([]);
+  const [editedFact, setEditedFact] = useState<{ id: string; text: string } | null>(null);
+  const [preferenceError, setPreferenceError] = useState(false);
   const [loadingFacts, setLoadingFacts] = useState(false);
 
   // Address states
@@ -461,15 +463,15 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
           What I remember about you
         </h3>
         <p className="text-xs text-gray-500">
-          The agent automatically extracts standing facts (like dietary preferences and allergies)
-          to customize responses. Delete items below if you no longer wish them to be remembered.
+          Only preferences you explicitly ask to save are stored here. You can edit or remove them.
         </p>
 
+        {preferenceError && <p role="alert">Preference could not be saved.</p>}
         {loadingFacts ? (
           <p className="text-sm text-gray-400">Loading memories...</p>
         ) : facts.length === 0 ? (
           <div className="p-4 border border-dashed rounded-lg text-center text-sm text-gray-400">
-            No memories stored yet. Try saying "remember I'm lactose intolerant" in chat!
+            No preferences saved yet. Try “remember that I prefer vegetarian products” in chat.
           </div>
         ) : (
           <div className="divide-y divide-gray-100 dark:divide-gray-900">
@@ -483,8 +485,55 @@ export const Settings: React.FC<SettingsProps> = ({ userRole, onRoleChange }) =>
                     "{fact.fact_text}"
                   </span>
                 </div>
+                {editedFact?.id === fact.id ? (
+                  <form
+                    className="flex flex-wrap gap-2"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void api
+                        .put<PersistentFact>(`/users/facts/${fact.id}`, {
+                          fact_text: editedFact.text,
+                        })
+                        .then((response) => {
+                          setFacts((current) =>
+                            current.map((item) => (item.id === fact.id ? response.data : item))
+                          );
+                          setEditedFact(null);
+                        })
+                        .catch(() => setPreferenceError(true));
+                    }}
+                  >
+                    <label className="grid gap-1 text-sm">
+                      Edit preference
+                      <input
+                        className="rounded border bg-transparent p-1"
+                        maxLength={200}
+                        required
+                        value={editedFact.text}
+                        onChange={(event) =>
+                          setEditedFact({ id: fact.id, text: event.target.value })
+                        }
+                      />
+                    </label>
+                    <button type="submit">Save</button>
+                    <button type="button" onClick={() => setEditedFact(null)}>
+                      Cancel
+                    </button>
+                  </form>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPreferenceError(false);
+                      setEditedFact({ id: fact.id, text: fact.fact_text });
+                    }}
+                  >
+                    Edit
+                  </button>
+                )}
                 <button
-                  onClick={() => handleDeleteFact(fact.id)}
+                  aria-label="Delete preference"
+                  onClick={() => void handleDeleteFact(fact.id)}
                   className="p-1.5 hover:bg-red-50 dark:hover:bg-red-950/20 text-red-500 rounded-lg transition"
                 >
                   <Trash2 size={16} />

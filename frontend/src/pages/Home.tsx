@@ -13,7 +13,7 @@ export const Home: React.FC = () => {
     const fetchFeatured = async () => {
       try {
         const data = await productService.list(undefined, true);
-        setFeaturedProducts(data.items);
+        setFeaturedProducts(data?.items ?? []);
       } catch (e) {
         console.error(e);
       } finally {
@@ -172,7 +172,7 @@ export const Home: React.FC = () => {
 
                   <div className="flex items-center gap-4">
                     <span className="text-2xl font-semibold text-accent">
-                      €{currentProduct.price.toFixed(2)}
+                      ₹{currentProduct.price.toFixed(2)}
                     </span>
                     <span className="text-xs text-muted">Category: {currentProduct.category}</span>
                   </div>

@@ -1,0 +1,16 @@
+services:
+  backend:
+    volumes:
+      - speech-models:/app/models:ro
+  speech-assets:
+    image: ${BACKEND_IMAGE:-grocergenie-backend:local}
+    profiles: [tools]
+    command: [python, /voice_assets.py, --directory, /app/models]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - speech-models:/app/models
+      - ./scripts/voice_assets.py:/voice_assets.py:ro
+
+volumes:
+  speech-models:

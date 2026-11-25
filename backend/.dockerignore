@@ -31,3 +31,11 @@ models/
 *.egg-info
 dist/
 build/
+
+.env
+.env.*
+*.pem
+*.key
+uploads/
+.mypy_cache/
+.coverage*

@@ -1,2 +1,13 @@
-#!/bin/sh
-make check
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --staged --redact=100 --no-banner
+else
+  git diff --cached --no-ext-diff --no-color --unified=0 |
+    sed -n '/^+++ /d; s/^+//p' |
+    docker run --rm --interactive --network none ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f stdin --redact=100 --no-banner
+fi
+
+make lint format

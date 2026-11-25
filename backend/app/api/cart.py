@@ -1,15 +1,17 @@
 import uuid
 from decimal import Decimal
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import joinedload
 
+from app.commerce.cart import change_cart
+from app.commerce.receipts import prior_result, record_result
 from app.core.dependencies import get_current_customer, get_db
 from app.db.models.cart import CartItem
-from app.db.models.product import Product
 from app.db.models.user import User
 
 router = APIRouter(prefix="/cart", tags=["Cart"])
@@ -17,6 +19,8 @@ router = APIRouter(prefix="/cart", tags=["Cart"])
 
 # Schemas
 class CartProductDetail(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: uuid.UUID
     name: str
     price: Decimal
@@ -30,17 +34,16 @@ class CartItemResponse(BaseModel):
     quantity: int
     product: CartProductDetail
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AddCartItemPayload(BaseModel):
     product_id: uuid.UUID
-    quantity: int = 1
+    quantity: int = Field(1, ge=1, le=1000, strict=True)
 
 
 class UpdateCartItemPayload(BaseModel):
-    quantity: int
+    quantity: int = Field(ge=1, le=1000, strict=True)
 
 
 @router.get("", response_model=list[CartItemResponse])
@@ -55,63 +58,37 @@ async def get_cart(
     return list(result.scalars().all())
 
 
+async def _get_cart_item(
+    db: AsyncSession, user_id: uuid.UUID, product_id: uuid.UUID
+) -> CartItem:
+    item = await db.scalar(
+        select(CartItem)
+        .options(joinedload(CartItem.product))
+        .where(CartItem.user_id == user_id, CartItem.product_id == product_id)
+    )
+    if item is None:
+        raise HTTPException(404, "Cart item not found.")
+    return item
+
+
 @router.post("", response_model=CartItemResponse, status_code=status.HTTP_201_CREATED)
 async def add_to_cart(
     payload: AddCartItemPayload,
+    idempotency_key: Annotated[uuid.UUID, Header()],
     user: User = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
-) -> CartItem:
-    # Verify product exists and has stock
-    product_result = await db.execute(
-        select(Product).where(Product.id == payload.product_id, Product.is_active)
+) -> CartItemResponse:
+    intent = f"cart-add:{payload.product_id}:{payload.quantity}"
+    prior = await prior_result(db, user.id, idempotency_key, intent, CartItemResponse)
+    if prior is not None:
+        return prior
+    await change_cart(db, user.id, payload.product_id, payload.quantity, add=True)
+    result = CartItemResponse.model_validate(
+        await _get_cart_item(db, user.id, payload.product_id)
     )
-    product = product_result.scalar_one_or_none()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found or inactive",
-        )
-
-    if product.stock < payload.quantity:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Insufficient stock. Available: {product.stock}",
-        )
-
-    # Check if item is already in cart
-    cart_result = await db.execute(
-        select(CartItem)
-        .options(joinedload(CartItem.product))
-        .where(CartItem.user_id == user.id, CartItem.product_id == payload.product_id)
-    )
-    cart_item = cart_result.scalar_one_or_none()
-
-    if cart_item:
-        # Update quantity
-        cart_item.quantity += payload.quantity
-        if product.stock < cart_item.quantity:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient stock for updated quantity. Available: {product.stock}",
-            )
-    else:
-        # Create new cart item
-        cart_item = CartItem(
-            user_id=user.id,
-            product_id=payload.product_id,
-            quantity=payload.quantity,
-        )
-        db.add(cart_item)
-
+    record_result(db, user.id, idempotency_key, intent, result)
     await db.commit()
-
-    # Eager load relationships for response mapping
-    result = await db.execute(
-        select(CartItem)
-        .options(joinedload(CartItem.product))
-        .where(CartItem.id == cart_item.id)
-    )
-    return result.scalar_one()
+    return result
 
 
 @router.put("/{product_id}", response_model=CartItemResponse)
@@ -121,43 +98,9 @@ async def update_cart_quantity(
     user: User = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
 ) -> CartItem:
-    if payload.quantity <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Quantity must be greater than zero",
-        )
-
-    # Check if product exists and stock
-    product_result = await db.execute(select(Product).where(Product.id == product_id))
-    product = product_result.scalar_one_or_none()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found",
-        )
-
-    if product.stock < payload.quantity:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Insufficient stock. Available: {product.stock}",
-        )
-
-    # Find the cart item
-    cart_result = await db.execute(
-        select(CartItem)
-        .options(joinedload(CartItem.product))
-        .where(CartItem.user_id == user.id, CartItem.product_id == product_id)
-    )
-    cart_item = cart_result.scalar_one_or_none()
-    if not cart_item:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Item not found in cart",
-        )
-
-    cart_item.quantity = payload.quantity
+    await change_cart(db, user.id, product_id, payload.quantity)
     await db.commit()
-    return cart_item
+    return await _get_cart_item(db, user.id, product_id)
 
 
 @router.delete("/{product_id}")
@@ -166,19 +109,6 @@ async def remove_from_cart(
     user: User = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    stmt = select(CartItem).where(
-        CartItem.user_id == user.id, CartItem.product_id == product_id
-    )
-    res = await db.execute(stmt)
-    cart_item = res.scalar_one_or_none()
-
-    if not cart_item:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Item not found in cart",
-        )
-
-    await db.delete(cart_item)
+    await change_cart(db, user.id, product_id, 0)
     await db.commit()
-
     return {"status": "success", "detail": "Item removed from cart."}

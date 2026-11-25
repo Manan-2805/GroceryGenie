@@ -1,45 +1,26 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AxiosError } from 'axios';
 import React, { useCallback, useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { BrowserRouter, Link, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 
 import { AppSidebar } from './components/AppSidebar';
-import { VoiceSessionProvider } from './contexts/VoiceSessionContext';
 import { Agent } from './pages/Agent';
 import { Cart } from './pages/Cart';
 import { Catalog } from './pages/Catalog';
 import { Checkout } from './pages/Checkout';
-import { ErrorPage } from './pages/ErrorPage';
 import { FulfillmentQueue } from './pages/FulfillmentQueue';
 import { Home } from './pages/Home';
 import { InventoryManagement } from './pages/InventoryManagement';
 import { ItemDetail } from './pages/ItemDetail';
 import { Login } from './pages/Login';
-import { Maintenance } from './pages/Maintenance';
 import { Orders } from './pages/Orders';
 import { SellerAnalysis } from './pages/SellerAnalysis';
 import { SellerDashboard } from './pages/SellerDashboard';
 import { Settings } from './pages/Settings';
-import { authService, healthService } from './services/api';
+import { authService } from './services/api';
 import { useUIStore } from './store/uiStore';
 
 const queryClient = new QueryClient();
-
-const NavigationListener: React.FC = () => {
-  const navigate = useNavigate();
-  useEffect(() => {
-    const handleNavigation = (event: Event) => {
-      const customEvent = event as CustomEvent<{ path?: string }>;
-      const path = customEvent.detail?.path;
-      if (typeof path === 'string' && path.trim().length > 0) {
-        void navigate(path);
-      }
-    };
-    window.addEventListener('agent-navigate', handleNavigation);
-    return () => window.removeEventListener('agent-navigate', handleNavigation);
-  }, [navigate]);
-
-  return null;
-};
 
 export const AppContent: React.FC = () => {
   if (import.meta.env.DEV) {
@@ -47,61 +28,41 @@ export const AppContent: React.FC = () => {
     console.log('[Dev Render] App / AppContent');
   }
 
-  const { theme, backendUnreachable, appError } = useUIStore();
+  const { theme } = useUIStore();
   const [user, setUser] = useState<{ name: string; role: string } | null>(null);
   const [loading, setLoading] = useState(true);
-  const navigate = useNavigate();
   const location = useLocation();
 
-  const isMaintenancePage = location.pathname === '/maintenance';
-  const isErrorPage = location.pathname === '/error';
-  const hasBackendUnreachable = backendUnreachable === true;
-  const hasAppError = typeof appError === 'string' && appError.trim().length > 0;
-
-  useEffect(() => {
-    if (hasBackendUnreachable && location.pathname !== '/maintenance') {
-      void navigate('/maintenance');
-    } else if (!hasBackendUnreachable && location.pathname === '/maintenance') {
-      void navigate('/');
-    }
-
-    if (hasAppError && location.pathname !== '/error') {
-      void navigate('/error');
-    } else if (!hasAppError && location.pathname === '/error') {
-      void navigate('/');
-    }
-  }, [hasAppError, hasBackendUnreachable, location.pathname, navigate]);
+  const [connectionError, setConnectionError] = useState(false);
 
   const fetchProfile = useCallback(async () => {
     try {
+      setConnectionError(false);
       const data = await authService.getMe();
-      setUser({ name: data.name, role: data.role });
-    } catch {
+      if ('name' in data && 'role' in data) {
+        setUser({ name: data.name, role: data.role });
+      } else {
+        setUser(null);
+      }
+    } catch (error) {
       setUser(null);
+      if (!(error instanceof AxiosError) || error.response?.status !== 401)
+        setConnectionError(true);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  const checkHealth = useCallback(async () => {
-    try {
-      const data = await healthService.checkApiHealth();
-      useUIStore.getState().setVoiceOk(data.voice_ok);
-    } catch (error) {
-      console.error('Health check failed', error);
-      useUIStore.getState().setVoiceOk(false);
-    }
-  }, []);
-
   useEffect(() => {
     void fetchProfile();
-    void checkHealth();
-  }, [checkHealth, fetchProfile]);
+  }, [fetchProfile]);
 
   const handleLogout = useCallback(async () => {
     try {
       await authService.logout();
       setUser(null);
+      useUIStore.getState().clearSession();
+      queryClient.clear();
     } catch (e) {
       console.error(e);
     }
@@ -111,7 +72,11 @@ export const AppContent: React.FC = () => {
     try {
       await authService.switchRole(newRole);
       const data = await authService.getMe();
-      setUser({ name: data.name, role: data.role });
+      if ('name' in data && 'role' in data) {
+        setUser({ name: data.name, role: data.role });
+      } else {
+        setUser(null);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -126,7 +91,7 @@ export const AppContent: React.FC = () => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
-  if (loading && !isMaintenancePage && !isErrorPage) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-app text-muted text-sm font-medium">
         Loading GroceryGenie application...
@@ -134,21 +99,41 @@ export const AppContent: React.FC = () => {
     );
   }
 
-  if (isMaintenancePage) {
-    return <Maintenance />;
-  }
-
-  if (isErrorPage) {
-    return <ErrorPage />;
+  if (connectionError) {
+    return (
+      <main className="m-8 glass-card max-w-lg space-y-4 p-6">
+        <h1 className="text-xl font-semibold">GroceryGenie is unavailable</h1>
+        <p role="alert">The app could not reach the account service.</p>
+        <button
+          className="rounded-lg border px-3 py-2"
+          type="button"
+          onClick={() => void fetchProfile()}
+        >
+          Retry
+        </button>
+      </main>
+    );
   }
 
   if (user === null) {
-    return <Login onLoginSuccess={fetchProfile} />;
+    if (location.pathname === '/items' || location.pathname.startsWith('/items/')) {
+      return (
+        <main className="w-full max-w-7xl mx-auto px-4 py-6">
+          <Link to="/login" className="block mb-4 text-accent">
+            Sign in
+          </Link>
+          <Routes>
+            <Route path="/items" element={<Catalog />} />
+            <Route path="/items/:id" element={<ItemDetail />} />
+          </Routes>
+        </main>
+      );
+    }
+    return <Login />;
   }
 
   return (
     <div className="min-h-screen flex bg-app text-heading transition-colors duration-300">
-      <NavigationListener />
       <AppSidebar user={user} onLogout={handleLogout} />
 
       <main className="flex-1 min-w-0 h-screen overflow-y-auto pt-14 md:pt-0">
@@ -196,8 +181,6 @@ export const AppContent: React.FC = () => {
               element={user.role === 'seller' ? <SellerAnalysis /> : <Navigate to="/items" />}
             />
             <Route path="/agent" element={<Agent />} />
-            <Route path="/maintenance" element={<Maintenance />} />
-            <Route path="/error" element={<ErrorPage />} />
           </Routes>
         </div>
       </main>
@@ -208,11 +191,9 @@ export const AppContent: React.FC = () => {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <VoiceSessionProvider>
-        <BrowserRouter>
-          <AppContent />
-        </BrowserRouter>
-      </VoiceSessionProvider>
+      <BrowserRouter>
+        <AppContent />
+      </BrowserRouter>
     </QueryClientProvider>
   );
 }

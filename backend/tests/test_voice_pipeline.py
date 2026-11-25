@@ -1,4 +1,3 @@
-import unittest
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -7,71 +6,26 @@ from app.services.voice.asr import transcribe_pcm_chunk
 from app.services.voice.tts import synthesize_text_to_pcm
 
 
-class TestVoicePipeline(unittest.TestCase):
-    @patch("app.services.voice.asr.get_asr_model")
-    @patch("app.services.voice.asr.tempfile.NamedTemporaryFile")
-    @patch("app.services.voice.asr.os.path.exists")
-    @patch("app.services.voice.asr.os.remove")
-    @patch("app.services.voice.asr.wave.open")
-    def test_transcribe_pcm_chunk(
-        self,
-        mock_wave_open,
-        mock_remove,
-        mock_exists,
-        mock_named_tempfile,
-        mock_get_asr_model,
-    ):  # noqa: PLR0913
-        mock_exists.return_value = True
-        # Mock temp file context manager
-        mock_tmp = MagicMock()
-        mock_tmp.name = "/tmp/mock_chunk.wav"
-        mock_tmp.__enter__ = MagicMock(return_value=mock_tmp)
-        mock_tmp.__exit__ = MagicMock(return_value=False)
-        mock_named_tempfile.return_value = mock_tmp
+def test_asr_receives_normalized_pcm_without_temp_files():
+    with patch("app.services.voice.asr.get_asr_model") as model:
+        model.return_value.recognize.return_value = " two packages "
+        assert transcribe_pcm_chunk(b"\x00\x80\xff\x7f") == "two packages"
+        args, kwargs = model.return_value.recognize.call_args
+        np.testing.assert_allclose(args[0], [-1, 32767 / 32768])
+        assert kwargs == {"sample_rate": 16000}
 
-        # Mock model recognition
-        mock_model = MagicMock(spec=["recognize"])
-        mock_model.recognize.return_value = "order 2 kg tomatoes"
-        mock_get_asr_model.return_value = mock_model
-        # Mock wave write context manager
-        mock_wave_file = MagicMock()
-        mock_wave_open.return_value.__enter__.return_value = mock_wave_file
 
-        # Generate fake PCM bytes (2 seconds of audio)
-        sample_rate = 16000
-        duration = 2
-        t = np.arange(sample_rate * duration) / sample_rate
-        fake_pcm = (np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16).tobytes()
+def test_asr_skips_empty_pcm_before_loading_model():
+    with patch("app.services.voice.asr.get_asr_model") as model:
+        assert transcribe_pcm_chunk(b"") == ""
+        model.assert_not_called()
 
-        # Run transcription
-        result = transcribe_pcm_chunk(fake_pcm, sample_rate)
 
-        # Assertions
-        self.assertEqual(result, "order 2 kg tomatoes")
-        mock_model.recognize.assert_called_once_with("/tmp/mock_chunk.wav")
-        mock_wave_open.assert_called_once_with("/tmp/mock_chunk.wav", "wb")
-        mock_wave_file.writeframes.assert_called_once_with(fake_pcm)
-        mock_remove.assert_called_once_with("/tmp/mock_chunk.wav")
-
-    @patch("app.services.voice.tts.get_piper_voice")
-    def test_synthesize_text_to_pcm(self, mock_get_piper_voice):
-        # Mock voice synthesis return chunks
-        mock_chunk1 = MagicMock()
-        mock_chunk1.audio_int16_bytes = b"\x00\x01\x02\x03"
-        mock_chunk2 = MagicMock()
-        mock_chunk2.audio_int16_bytes = b"\x04\x05\x06\x07"
-
-        mock_voice = MagicMock()
-        mock_voice.synthesize.return_value = [mock_chunk1, mock_chunk2]
-        mock_get_piper_voice.return_value = mock_voice
-
-        # Run synthesis
-        pcm_bytes = synthesize_text_to_pcm("Hello world", emotion="excited")
-
-        # Assertions
-        self.assertEqual(pcm_bytes, b"\x00\x01\x02\x03\x04\x05\x06\x07")
-        mock_voice.synthesize.assert_called_once()
-        # Verify custom syn_config emotion values are used
-        args, kwargs = mock_voice.synthesize.call_args
-        self.assertEqual(args[0], "Hello world")
-        self.assertAlmostEqual(kwargs["syn_config"].length_scale, 0.85)
+def test_piper_preserves_its_pcm_output():
+    with patch("app.services.voice.tts.get_piper_voice") as voice:
+        voice.return_value.synthesize.return_value = [
+            MagicMock(audio_int16_bytes=b"\x01\x00"),
+            MagicMock(audio_int16_bytes=b"\x02\x00"),
+        ]
+        assert synthesize_text_to_pcm("milk") == b"\x01\x00\x02\x00"
+        voice.return_value.synthesize.assert_called_once_with("milk")

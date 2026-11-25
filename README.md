@@ -1,350 +1,89 @@
-# 🛒 GroceryGenie
+# GroceryGenie
 
-> **Voice-First AI-Powered Grocery Shopping Assistant**
+GroceryGenie is a grocery marketplace portfolio project with a web storefront, seller tools, and a shared text and hands-free voice assistant. Checkout and seeded data are simulated. Prices are in INR.
 
-[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.138-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-6.0-3178C6?logo=typescript&logoColor=white)](https://typescriptlang.org)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+## Start the application
 
----
+Docker Compose v2 gives you the same Linux CPU runtime across supported hosts. Copy `.env.example` to `.env`, set a URL-safe database password and a random session signing key, then run:
 
-## 📋 Overview
-
-GroceryGenie is a **premium, voice-first intelligent grocery shopping assistant** that revolutionizes how customers interact with online grocery stores. It enables:
-
-- **🎤 Voice & Text AI Agent**: Natural language shopping assistant that can find products, manage carts, check orders, handle addresses, and more — with **≤1 LLM call per turn** for most actions
-- **⚡ Zero-LLM Fast Path**: Button clicks, cart actions, order checks, and address management execute in **<10ms with 0 LLM calls**
-- **🔍 Hybrid RRF Search**: Combines Qdrant vector embeddings + PostgreSQL BM25 keyword search fused via **Reciprocal Rank Fusion (k=60)** for accurate product discovery
-- **🔄 Event-Driven Vector Sync**: Seller product create/update/deactivate automatically syncs to Qdrant in real-time — no manual re-indexing
-- **🗺️ Store Layout Awareness**: Neo4j graph database maps products to aisles and sections
-- **🏪 Seller Dashboard**: Complete inventory management — create, update, and deactivate products via text or voice
-- **🔒 Safety-First**: Strict dietary/allergen guardrails with disclaimers, permission-gated actions
-
----
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    Frontend (React + Vite)                                   │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────────────┐   │
-│  │ Text Chat│  │Voice Chat│  │  Pages   │  │ Zustand Store            │   │
-│  │ (SSE)    │  │ (WebSock)│  │(Catalog, │  │ + React Query            │   │
-│  │          │  │          │  │ Cart,etc)│  │                          │   │
-│  └────┬─────┘  └────┬─────┘  └──────────┘  └──────────────────────────┘   │
-└───────┼──────────────┼─────────────────────────────────────────────────────┘
-        │              │
-┌───────▼──────────────▼─────────────────────────────────────────────────────┐
-│                    Backend (FastAPI + Granian)                               │
-│                                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │              Agent Orchestrator (Optimized)                         │   │
-│  │  ┌──────────────────────┐  ┌──────────────┐  ┌──────────────────┐  │   │
-│  │  │ 0ms Fast Path        │  │ Single LLM   │  │ Python Tools     │  │   │
-│  │  │ (13+ patterns,       │  │ Router       │  │ (cart, orders,   │  │   │
-│  │  │  0 LLM calls)        │  │ (1 call)     │  │  addresses, etc) │  │   │
-│  │  └──────────────────────┘  └──────────────┘  └──────────────────┘  │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                 Voice Pipeline                                      │   │
-│  │  Mic → VAD (RMS) → ASR (Parakeet) → Agent → TTS (Piper)            │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                              │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────────────────┐   │
-│  │PostgreSQL│  │  Redis   │  │  Qdrant  │  │  Neo4j (Graph)         │   │
-│  │ (BM25)   │  │ (Session)│  │(Vectors+ │  │ (Store Layout)         │   │
-│  │          │  │          │  │Auto-Sync)│  │                        │   │
-│  └──────────┘  └──────────┘  └──────────┘  └────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
+```sh
+docker compose up --build -d --wait
+docker compose exec backend python -m app.db.seed
 ```
 
----
+Open `http://localhost:8080/items` to browse the catalog. Migration runs in a dedicated Compose job. The explicit showcase seed inserts 10,000 distinct listings across eight shops and 192 synthetic historical orders. Run it again without overwriting existing records. Use `--as-of YYYY-MM-DD` to reproduce the synthetic sales dates on a fresh database.
 
-## 🚀 Quick Start
+Register `http://localhost:8080/api/v1/auth/google/callback` as an authorized Google OAuth redirect and supply the client ID and secret in your local configuration. Keep the redirect, browser origin and backend configuration consistent. Catalog browsing works with Google and the assistant unconfigured. For a remote installation, terminate HTTPS at your ingress and configure `ENV_MODE=production`, HTTPS frontend/origin/redirect values and a stable secret.
 
-### Prerequisites
+## Assistant
 
-| Tool | Version | Purpose |
-|------|---------|---------|
-| [Docker & Docker Compose](https://www.docker.com/) | Latest | Infrastructure services |
-| [Python 3.12+](https://python.org) | >= 3.12 | Backend runtime |
-| [uv](https://github.com/astral-sh/uv) | Latest | Python package manager |
-| [Node.js](https://nodejs.org/) | >= 18 | Frontend development |
-| [NVIDIA GPU](https://nvidia.com) | Optional | GPU acceleration for ASR/embeddings |
+Open **AI Assistant** after signing in. Select Text Mode or Voice Mode. Confirm proposed writes after reviewing the exact values. Text and voice use the same account, conversations and action receipts. Examples:
 
-### 1. Clone & Configure
+- “Find cheap milk under ₹50.”
+- “Show my orders.”
+- “Add address.” Answer the requested fields, then check the full preview.
+- “Remember that I prefer vegetarian products.”
+- In seller mode, “Show inventory” or “Show my pending orders.”
 
-```bash
-git clone https://github.com/Manan-2805/GroceryGenie.git
-cd GroceryGenie
-cp .env.example .env.dev
+Simple commands and local address entry work without cloud keys. Broader planning uses a configured OpenAI-compatible cloud endpoint. Supply a JSON array in `LLM_PROVIDERS` with `name`, `base_url` ending in the provider’s API version path, `model`, and `api_key`. For Moonshot, start with the Kimi K3 example in [.env.example](.env.example). The example selects low reasoning effort and the provider's completion-token limit to bound planning latency and output. An optional fallback is the second entry. The optional `json_object` switch controls whether the request asks for a JSON response format. Local schema validation applies regardless of the provider setting. Keep the credentials in runtime configuration. Saved address fields stay out of provider requests during the local address flow.
+
+To verify one live Moonshot planning request after configuring the key and current rates, execute the checked-in smoke script inside the backend container:
+
+```sh
+docker compose exec -T backend python - --live < scripts/smoke_llm.py
 ```
 
-Fill in your `LLM_PROVIDERS` (or `NIM_API_KEY`) and any other required keys in `.env.dev`.
+This sends a single synthetic read-only request and checks the returned intent. [Kimi K3 API parameters](https://platform.kimi.ai/docs/guide/kimi-k3-quickstart) [Kimi K3 pricing](https://www.kimi.com/en/blog/kimi-k3)
 
-### 2. Start Infrastructure
+### Enable hands-free voice
 
-```bash
-# Start PostgreSQL, Redis, Qdrant, Neo4j
-docker compose -f docker-compose.infra.yml up -d
+Once the CPU image is built or pulled, download speech assets into a dedicated volume using that image:
+
+```sh
+docker compose -f compose.yaml -f compose.voice.yaml run --rm speech-assets
+docker compose -f compose.yaml -f compose.voice.yaml up -d --wait
 ```
 
-### 3. Setup Backend
+The backend mounts the populated volume read-only. Canary int8 is the CPU default for its measured cold-start advantage. The portable download script also accepts `--with-parakeet` for local model comparisons. Select Parakeet with `ASR_MODEL=nemo-parakeet-tdt-0.6b-v2` and `ASR_SUBDIR=asr` when both assets are present. Check the upstream cards for terms and attribution. [Canary ONNX export](https://huggingface.co/istupakov/canary-180m-flash-onnx) [Parakeet ONNX export](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx) [Piper Lessac model card](https://huggingface.co/rhasspy/piper-voices/tree/b145f2ac26522d6a2ccde0164b7b0e48b1e3199c/en/en_US/lessac/medium)
 
-```bash
-cd backend
-uv sync
-uv run alembic upgrade head
-uv run uvicorn app.main:app --reload --port 8000
+Use desktop Chromium with microphone permission on localhost or HTTPS. Start Voice Mode explicitly. The mic opens after the greeting finishes and reopens after each response. **Interrupt** stops the current playback and asks the server to abandon unfinished work. A committed action remains in the conversation. Native speech inference still occupies its worker slot until it finishes. Five sessions can connect per API process, with one inference job active at a time. Voice is English-only. Text Mode remains available when local speech fails. Automatic wake word and speech-during-playback interruption are outside the current implementation.
+
+## Development and verification
+
+Run `make install` with Python 3.12, uv and Node 22.23.5 available. Set `DATABASE_URL` to a local application database and use a separate migrated, disposable `TEST_DATABASE_URL` for test data. Migrate with `make migrate`. The Vite proxy defaults to `http://127.0.0.1:8000` and accepts `GROCERY_VITE_PROXY` for an alternate local backend.
+
+| Command | Purpose |
+|---|---|
+| `make check` | Ruff, strict Mypy/TypeScript, formatting, backend tests and a production frontend build |
+| `make coverage` | Application coverage with an 80% minimum |
+| `make security` | Bandit and Python/npm package advisory checks |
+| `make test-e2e` | Chromium against a running isolated fixture stack |
+| `docker compose config --quiet` | Resolve Compose structure without printing runtime settings |
+
+The Chromium suite uses synthetic accounts in a disposable database, through the regular authenticated cookie path. Install the browser with `uv run --locked playwright install chromium` from `backend/`. Set `E2E_BASE_URL` if Vite uses a different origin. Use `git config core.hooksPath scripts` to enable the pre-commit hook. It scans staged changes with Gitleaks before running lint and formatting checks. The hook uses a local Gitleaks executable when available and the pinned Gitleaks Docker image otherwise.
+
+Use `scripts/benchmark_catalog.py` with a loopback URL for the seeded catalog workload. Run `scripts/benchmark_voice.py` and `scripts/benchmark_voice_session.py` with the locked backend interpreter and `PYTHONPATH=backend` to measure models and the authenticated server path. The local scripts use synthetic or existing opt-in assets and consume zero cloud API credits.
+
+## Demonstration sequence
+
+1. Browse and compare packages from two shops, add them to a cart, choose an address and place a simulated order.
+2. Switch to a seller account that owns one of the products. Advance only that seller’s fulfillment and view its revenue, low stock and CSV report.
+3. Return to the buyer account. Track each fulfillment and review an item once its shipment is delivered.
+4. Open the assistant. Search by budget, confirm a saved preference or address, switch to Voice Mode and check an order hands-free.
+5. Interrupt a voice response and end the session. Review the conversation and the committed action outcome in Text Mode.
+
+The backend is a FastAPI monolith. PostgreSQL holds transactional commerce, indexed catalog search, sessions and accepted assistant receipts. The React browser and voice WebSocket use the same shared business operations. [Audit](docs/PROJECT_AUDIT.md) [Implementation plan](docs/FINAL_IMPLEMENTATION_PLAN.md) [Dependency changes](docs/DEPENDENCY_CHANGES.md)
+
+
+## GitHub Actions credentials
+
+For fixed CI-only credentials, create `POSTGRES_PASSWORD` and `SESSION_SIGNING_KEY` under **Settings → Secrets and variables → Actions → New repository secret**. Generate a separate 64-character hex value for each, independent of your local or deployment credentials. You can also create them directly from your terminal with an authenticated GitHub CLI:
+
+```sh
+openssl rand -hex 32 | gh secret set POSTGRES_PASSWORD --repo Manan-2805/GroceryGenie
+openssl rand -hex 32 | gh secret set SESSION_SIGNING_KEY --repo Manan-2805/GroceryGenie
 ```
 
-### 4. Setup Frontend
+The workflow uses these repository secrets on push runs. When a secret is unavailable, the runner generates a fresh masked value. Pull request runs always use disposable credentials. GitHub supplies `GITHUB_TOKEN` for GHCR publication. [GitHub Actions secrets](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-### 5. Download Voice Models
-
-```bash
-cd backend
-uv run download_and_test.py
-# Select option 1 for TTS → ASR pipeline test
-```
-
-Open [http://localhost:5173](http://localhost:5173) to browse the app.
-
----
-
-## 🎯 Key Features
-
-### 🤖 AI Assistant (Agent)
-- **Natural Language Understanding**: Ask questions, give commands in plain English
-- **Single-shot Intent Classification**: One LLM call extracts tool + parameters
-- **Zero-LLM Fast Path**: 13+ common commands handled with 0 LLM calls via string matching
-- **Structured Options**: Agent can present clickable choices + free-form input
-- **Multi-turn Conversations**: Remembers context across turns
-- **Permission Gates**: Sensitive actions require explicit user approval
-- **Persistent Memory**: Learns user preferences and dietary restrictions via PostgreSQL
-- **Multi-provider LLM**: Automatic fallback between providers on timeout/auth failure
-
-### 🎤 Voice Interface
-- **Real-time ASR**: Parakeet ONNX model with GPU acceleration
-- **Natural TTS**: Piper voice with emotion presets (excited, calm, neutral)
-- **Barge-in**: Interrupt the agent while it's speaking
-- **VAD**: RMS-based voice activity detection
-- **Heartbeat**: Connection health monitoring with auto-reconnection
-
-### 📦 Shopping Features
-- **Product Search**: Hybrid vector + keyword search with filters
-- **Cart Management**: Add/remove/update items with stock validation
-- **Order Placement**: Full checkout flow with address selection
-- **Address Management**: CRUD for saved delivery addresses
-- **Order Tracking**: Real-time order status updates (placed → packed → out_for_delivery → delivered)
-- **Product Ratings**: Rate delivered products with star ratings and comments
-- **Dietary Analysis**: Ingredient allergen checking with safety guardrails
-
-### 🏪 Seller Features
-- **Inventory Management**: Product CRUD with low-stock alerts
-- **Order Fulfillment**: Queue management with status transitions
-- **Dashboard Analytics**: Sales metrics, pending orders, low stock items
-- **Sales Analysis**: Revenue trends, category breakdown, AOV metrics
-
----
-
-## 💻 Tech Stack
-
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| **Frontend** | React 19, TypeScript 6, Vite 8 | Web client |
-| **Styling** | Tailwind CSS v3 | Responsive UI |
-| **State** | Zustand + TanStack Query | Client state & API caching |
-| **Routing** | React Router v7 | Page navigation |
-| **Backend** | FastAPI + Granian | REST API + WebSocket |
-| **ORM** | SQLAlchemy 2.0 + Alembic | Database ORM & migrations |
-| **Database** | PostgreSQL 16 | Primary data store |
-| **Cache** | Redis 7 | Session storage & caching |
-| **Vector DB** | Qdrant | Product embeddings search |
-| **Graph DB** | Neo4j | Store layout mapping |
-| **ASR** | Parakeet ONNX (nemo-parakeet-tdt) | Speech-to-text |
-| **TTS** | Piper ONNX | Text-to-speech |
-| **VAD** | RMS-based (custom) | Voice activity detection |
-| **Embeddings** | BAAI/bge-small-en-v1.5 | Product vector embeddings |
-| **LLM** | Multi-provider (NVIDIA NIM, Kimi, Ollama, etc.) | Agent reasoning |
-| **MCP** | FastMCP | Model Context Protocol server |
-
----
-
-## 🎮 GPU Acceleration
-
-GroceryGenie **automatically detects and utilizes NVIDIA GPUs** for accelerated processing:
-
-| Component | Without GPU | With GPU |
-|-----------|-------------|----------|
-| ASR (Speech-to-Text) | CPU (via ONNX CPU) | CUDA + DirectML |
-| Embeddings | CPU | CUDA |
-| TTS (Piper) | CPU (ONNX model) | CPU (ONNX model) |
-
-GPU detection is automatic at startup. To disable GPU:
-```bash
-export USE_GPU=false
-```
-Or set in `.env.dev`:
-```env
-USE_GPU=false
-ONNX_ASR_PROVIDERS=CPUExecutionProvider
-```
-
----
-
-## 📁 Project Structure
-
-```
-GroceryGenie/
-├── backend/                     # FastAPI Backend Service
-│   ├── app/
-│   │   ├── api/                 # REST + WebSocket endpoints
-│   │   │   ├── chat.py          # SSE text chat endpoint
-│   │   │   ├── ws.py            # Voice WebSocket endpoint
-│   │   │   ├── cart.py          # Cart CRUD
-│   │   │   ├── orders.py        # Order management
-│   │   │   ├── products.py      # Product CRUD + RAG QA
-│   │   │   ├── addresses.py     # Address management
-│   │   │   └── auth.py          # Google OAuth + JWT
-│   │   ├── core/
-│   │   │   ├── config.py        # Settings + GPU detection
-│   │   │   ├── security.py      # JWT + auth utilities
-│   │   │   └── dependencies.py  # FastAPI dependency injection
-│   │   ├── db/
-│   │   │   ├── models/          # SQLAlchemy models
-│   │   │   └── migrations/      # Alembic migrations
-│   │   └── services/
-│   │       ├── agent/           # AI Agent system
-│   │       │   ├── orchestrator.py  # Main agent loop
-│   │       │   ├── llm.py           # Multi-provider LLM client
-│   │       │   ├── memory.py        # Persistent fact classifier
-│   │       │   └── tools/           # Tool registry (flat, no DAG)
-│   │       │       ├── cart_tools.py
-│   │       │       ├── order_tools.py
-│   │       │       ├── product_tools.py
-│   │       │       ├── address_tools.py
-│   │       │       ├── seller_tools.py
-│   │       │       └── profile_tools.py
-│   │       ├── voice/           # Voice pipeline
-│   │       │   ├── asr.py       # Speech-to-text
-│   │       │   └── tts.py       # Text-to-speech
-│   │       └── rag/             # RAG system
-│   │           ├── embedder.py  # Text embeddings
-│   │           ├── retriever.py # Hybrid search
-│   │           └── graph.py     # Neo4j graph queries
-│   ├── tests/                   # Test suite
-│   └── download_and_test.py     # Model download + test
-├── frontend/                    # React + TypeScript Client
-│   └── src/
-│       ├── pages/               # Route pages
-│       │   ├── Agent.tsx        # Full AI Assistant page
-│       │   ├── Catalog.tsx      # Product catalog
-│       │   ├── Cart.tsx         # Shopping cart
-│       │   └── ...
-│       ├── contexts/
-│       │   └── VoiceSessionContext.tsx  # Voice WebSocket provider
-│       ├── services/
-│       │   └── api.ts           # API client with all services
-│       └── store/
-│           └── uiStore.ts       # Zustand UI state
-├── mcp_server/
-│   └── server.py                # FastMCP server with 17 tools
-└── models/                      # Local ML models (gitignored)
-```
-
----
-
-## 🧪 Testing
-
-```bash
-# Backend tests
-cd backend
-uv run pytest -v
-
-# Voice pipeline specific tests
-uv run pytest tests/test_voice_pipeline.py -v
-
-# E2E tests (requires running services)
-uv run pytest tests/test_e2e.py -v
-
-# Frontend checks
-cd frontend
-npm run check
-
-# Full CI checks
-make check
-```
-
----
-
-## 🐳 Docker Deployment
-
-```bash
-# 1. Start infrastructure (PostgreSQL, Redis, Qdrant, Neo4j)
-docker compose -f docker-compose.infra.yml up -d
-
-# 2. Start app services (backend + frontend)
-docker compose -f docker-compose.prod.yml up --build -d
-```
-
----
-
-## 🔧 Configuration
-
-Key environment variables (see `.env.dev` for full list):
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@db:5432/grocergenie` | PostgreSQL connection |
-| `REDIS_URL` | `redis://redis:6379/0` | Redis connection |
-| `QDRANT_URL` | `http://qdrant:6333` | Qdrant vector DB |
-| `NEO4J_URI` | `bolt://neo4j:7687` | Neo4j graph DB |
-| `LLM_PROVIDERS` | (JSON array) | Multi-provider LLM config |
-| `NIM_API_KEY` | - | NVIDIA NIM API key (legacy) |
-| `GOOGLE_CLIENT_ID` | - | Google OAuth client ID |
-| `JWT_SECRET_KEY` | - | JWT signing secret |
-| `USE_GPU` | `true` | Enable GPU acceleration |
-| `ONNX_ASR_PROVIDERS` | (auto-detect) | ONNX execution providers |
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Commit changes: `git commit -am 'Add my feature'`
-4. Push: `git push origin feature/my-feature`
-5. Open a Pull Request
-
-### Code Style
-- **Python**: Ruff formatting (88 char lines), type hints
-- **TypeScript**: ESLint + Prettier, strict mode
-- **Commits**: Follow conventional commits
-
----
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
----
-
-## 🔧 Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Voice not working | Check `health` endpoint → `voice_ok` must be true |
-| Model download fails | Check internet + disk space in `models/` directory |
-| GPU not detected | Verify CUDA installation + `torch.cuda.is_available()` |
-| WebSocket disconnects | Check firewall, enable HTTP/2, verify heartbeat |
-| LLM returns errors | Verify `LLM_PROVIDERS` or `NIM_API_KEY` and model availability |
+For local Compose, set the two values in your ignored root `.env`. For an existing PostgreSQL volume, use the current database password unless you also rotate the PostgreSQL role. To rotate it without recreating the volume, generate a fresh value and run `docker compose exec postgres psql -U grocery -d grocergenie`. Enter `\password grocery` at the prompt, provide the new password twice, then exit with `\q`. Update both secrets in `.env` privately and run `docker compose -f compose.yaml -f compose.voice.yaml up -d --wait`. The signing-key change invalidates outstanding OAuth state.

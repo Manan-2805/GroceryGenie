@@ -1,304 +1,438 @@
+"""Insert the synthetic showcase without changing existing records."""
+
+import argparse
 import asyncio
 import logging
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from uuid import NAMESPACE_URL, UUID, uuid5
 
-from sqlalchemy import delete
+from sqlalchemy.dialects.postgresql import insert
 
-from app.db.base import AsyncSessionFactory
-from app.db.models.enums import UserRole
+from app.db.base import AsyncSessionFactory, engine
+from app.db.models.enums import OrderStatus, UserRole
+from app.db.models.fulfillment import Fulfillment
+from app.db.models.order import Order, OrderItem
 from app.db.models.product import Product
 from app.db.models.user import User
-from app.services.rag.graph import (
-    link_product_to_aisle,
-    seed_store_layout,
+
+logger = logging.getLogger(__name__)
+SHOPS = (
+    "Mango Lane",
+    "Cedar Pantry",
+    "Morning Market",
+    "River Grocery",
+    "Lotus Foods",
+    "Green Corner",
+    "Coconut Basket",
+    "Harvest Lane",
 )
-from app.services.rag.retriever import (
-    COLLECTION_NAME,
-    get_qdrant_client,
-    index_product_in_qdrant,
+BRANDS = (
+    "Nila",
+    "Juniper",
+    "Hillside",
+    "Clay Pot",
+    "Blue Orchard",
+    "Green Field",
+    "Pebble",
+    "Pine Grove",
+    "Golden Grove",
+    "Palm House",
+)
+# Synthetic labels, prices, dietary information, and ingredients for the demo only.
+GOODS: tuple[tuple[str, str, tuple[str, ...], str, list[str], list[str], int], ...] = (
+    (
+        "Toned Milk",
+        "Dairy & Eggs",
+        ("200 ml", "500 ml", "1 litre", "2 litres", "6 × 200 ml"),
+        "Cow milk",
+        ["milk"],
+        ["vegetarian"],
+        24,
+    ),
+    (
+        "Salted Butter",
+        "Dairy & Eggs",
+        ("100 g", "200 g", "250 g", "500 g", "1 kg"),
+        "Pasteurized milk cream, salt",
+        ["milk"],
+        ["vegetarian"],
+        48,
+    ),
+    (
+        "Plain Curd",
+        "Dairy & Eggs",
+        ("100 g", "200 g", "400 g", "500 g", "1 kg"),
+        "Cow milk, live cultures",
+        ["milk"],
+        ["vegetarian"],
+        28,
+    ),
+    (
+        "Apple",
+        "Produce",
+        ("250 g", "500 g", "1 kg", "1.5 kg", "2 kg"),
+        "Apples",
+        [],
+        ["vegetarian", "vegan"],
+        42,
+    ),
+    (
+        "Cavendish Banana",
+        "Produce",
+        ("2 pieces", "4 pieces", "6 pieces", "8 pieces", "12 pieces"),
+        "Bananas",
+        [],
+        ["vegetarian", "vegan"],
+        15,
+    ),
+    (
+        "Baby Spinach",
+        "Produce",
+        ("100 g", "200 g", "250 g", "400 g", "500 g"),
+        "Spinach",
+        [],
+        ["vegetarian", "vegan"],
+        20,
+    ),
+    (
+        "Basmati Rice",
+        "Pantry",
+        ("250 g", "500 g", "1 kg", "2 kg", "5 kg"),
+        "Basmati rice",
+        [],
+        ["vegetarian", "vegan"],
+        48,
+    ),
+    (
+        "Toor Dal",
+        "Pantry",
+        ("250 g", "500 g", "750 g", "1 kg", "2 kg"),
+        "Pigeon peas",
+        [],
+        ["vegetarian", "vegan"],
+        48,
+    ),
+    (
+        "Rolled Oats",
+        "Pantry",
+        ("100 g", "250 g", "500 g", "750 g", "1 kg"),
+        "Whole grain oats",
+        ["oats"],
+        ["vegetarian", "vegan"],
+        55,
+    ),
+    (
+        "Whole Wheat Biscuits",
+        "Snacks",
+        ("6 pieces", "12 pieces", "18 pieces", "24 pieces", "36 pieces"),
+        "Whole wheat, sugar, butter",
+        ["wheat", "milk"],
+        ["vegetarian"],
+        32,
+    ),
+    (
+        "Almonds",
+        "Snacks",
+        ("50 g", "100 g", "200 g", "250 g", "500 g"),
+        "Almonds",
+        ["almonds"],
+        ["vegetarian", "vegan"],
+        52,
+    ),
+    (
+        "Roasted Makhana",
+        "Snacks",
+        ("20 g", "40 g", "60 g", "100 g", "200 g"),
+        "Fox nuts, sunflower oil, salt",
+        [],
+        ["vegetarian", "vegan"],
+        34,
+    ),
+    (
+        "Orange Juice",
+        "Beverages",
+        ("200 ml", "300 ml", "500 ml", "1 litre", "2 litres"),
+        "Orange juice",
+        [],
+        ["vegetarian", "vegan"],
+        27,
+    ),
+    (
+        "Sparkling Water",
+        "Beverages",
+        ("250 ml", "330 ml", "500 ml", "750 ml", "1 litre"),
+        "Water, carbon dioxide",
+        [],
+        ["vegetarian", "vegan"],
+        20,
+    ),
+    (
+        "Masala Chai",
+        "Beverages",
+        ("50 g", "100 g", "200 g", "250 g", "500 g"),
+        "Black tea, ginger, cardamom",
+        [],
+        ["vegetarian", "vegan"],
+        44,
+    ),
+    (
+        "Wheat Flour",
+        "Pantry",
+        ("250 g", "500 g", "1 kg", "2 kg", "5 kg"),
+        "Whole wheat",
+        ["wheat"],
+        ["vegetarian", "vegan"],
+        27,
+    ),
+    (
+        "Frozen Sweet Corn",
+        "Frozen",
+        ("100 g", "200 g", "250 g", "500 g", "1 kg"),
+        "Corn",
+        [],
+        ["vegetarian", "vegan"],
+        34,
+    ),
+    (
+        "Frozen Green Peas",
+        "Frozen",
+        ("100 g", "200 g", "250 g", "500 g", "1 kg"),
+        "Green peas",
+        [],
+        ["vegetarian", "vegan"],
+        32,
+    ),
+    (
+        "Paneer",
+        "Dairy & Eggs",
+        ("100 g", "150 g", "200 g", "400 g", "500 g"),
+        "Cow milk, citric acid",
+        ["milk"],
+        ["vegetarian"],
+        58,
+    ),
+    (
+        "Brown Eggs",
+        "Dairy & Eggs",
+        ("2 pieces", "4 pieces", "6 pieces", "12 pieces", "24 pieces"),
+        "Hen eggs",
+        ["egg"],
+        [],
+        20,
+    ),
+    (
+        "Black Chickpeas",
+        "Pantry",
+        ("100 g", "250 g", "500 g", "750 g", "1 kg"),
+        "Black chickpeas",
+        [],
+        ["vegetarian", "vegan"],
+        25,
+    ),
+    (
+        "Mango Nectar",
+        "Beverages",
+        ("150 ml", "250 ml", "500 ml", "750 ml", "1 litre"),
+        "Mango pulp, water, cane sugar",
+        [],
+        ["vegetarian", "vegan"],
+        26,
+    ),
+    (
+        "Coconut Water",
+        "Beverages",
+        ("200 ml", "250 ml", "500 ml", "750 ml", "1 litre"),
+        "Coconut water",
+        [],
+        ["vegetarian", "vegan"],
+        37,
+    ),
+    (
+        "Jaggery",
+        "Pantry",
+        ("100 g", "250 g", "500 g", "1 kg", "2 kg"),
+        "Sugarcane juice solids",
+        [],
+        ["vegetarian", "vegan"],
+        26,
+    ),
+    (
+        "Peanut Chikki",
+        "Snacks",
+        ("25 g", "50 g", "100 g", "150 g", "250 g"),
+        "Peanuts, jaggery",
+        ["peanut"],
+        ["vegetarian", "vegan"],
+        18,
+    ),
 )
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("app.db.seed")
+
+def demo_id(key: str) -> UUID:
+    return uuid5(NAMESPACE_URL, f"grocergenie:showcase:v1:{key}")
 
 
-async def seed_data() -> None:
-    logger.info("Connecting to Postgres database...")
-    async with AsyncSessionFactory() as db:
-        # Wipe all users and products to start clean
-        logger.info("Cleaning up old database data...")
-        await db.execute(delete(Product))
-        await db.execute(delete(User))
-        await db.commit()
-
-        # Wipe and recreate Qdrant collection to start clean
-        logger.info("Resetting Qdrant collection...")
-        try:
-            client = get_qdrant_client()
-            client.delete_collection(collection_name=COLLECTION_NAME)
-            logger.info("Deleted Qdrant collection.")
-            # Force recreate collection
-            from app.services.rag import retriever
-
-            retriever._qdrant_client = None
-            get_qdrant_client()
-            logger.info("Recreated Qdrant collection.")
-        except Exception as e:
-            logger.error(f"Error resetting Qdrant collection: {e}")
-
-        # 1. Seed only one dev user (role: customer by default, switchable to seller)
-        logger.info("Seeding dev user...")
-        dev_user = User(
-            google_sub="mock_dev_sub",
-            email="dev@GroceryGenie.com",
-            name="Dev User",
-            role=UserRole.customer,
+async def seed_data(as_of: date) -> None:
+    buyers = [demo_id(f"buyer/{n}") for n in range(16)]
+    shops = [demo_id(f"shop/{n}") for n in range(len(SHOPS))]
+    accounts = [
+        {
+            "id": account_id,
+            "google_sub": f"demo:{account_id}",
+            "email": f"{account_id}@example.invalid",
+            "name": label,
+            "role": role,
+        }
+        for ids, labels, role in (
+            (shops, SHOPS, UserRole.seller),
+            (
+                buyers,
+                [f"Demo Buyer {i + 1}" for i in range(len(buyers))],
+                UserRole.customer,
+            ),
         )
-        db.add(dev_user)
-        await db.commit()
-        await db.refresh(dev_user)
-
-        # 2. Seed products with variety to enable comparison tasks
-        products_data = [
-            # --- Produce ---
-            {
-                "name": "Fresh Fuji Apples",
-                "description": "Crisp and sweet organic Fuji apples, bag of 5",
-                "category": "Produce",
-                "price": Decimal("4.99"),
-                "stock": 25,
-                "image_url": "https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6?w=400",
-            },
-            {
-                "name": "Gala Apples",
-                "description": "Mildly sweet and juicy Gala apples, sold per kg",
-                "category": "Produce",
-                "price": Decimal("3.49"),
-                "stock": 40,
-                "image_url": "https://images.unsplash.com/photo-1568702846914-96b305d2aaeb?w=400",
-            },
-            {
-                "name": "Organic Spinach",
-                "description": "Pre-washed baby spinach leaves, organic 250g pack",
-                "category": "Produce",
-                "price": Decimal("2.99"),
-                "stock": 35,
-                "image_url": "https://images.unsplash.com/photo-1576045057995-568f588f82fb?w=400",
-            },
-            {
-                "name": "Frozen Spinach",
-                "description": "Chopped frozen spinach, 500g bag, flash-frozen at peak freshness",
-                "category": "Produce",
-                "price": Decimal("1.99"),
-                "stock": 60,
-                "image_url": "https://images.unsplash.com/photo-1558618666-fcd25c85f82e?w=400",
-            },
-            {
-                "name": "Roma Tomatoes",
-                "description": "Vine-ripened Roma tomatoes, 1 kg pack",
-                "category": "Produce",
-                "price": Decimal("2.49"),
-                "stock": 50,
-                "image_url": "https://images.unsplash.com/photo-1592924357228-91a4daadcfea?w=400",
-            },
-            {
-                "name": "Red Bell Peppers",
-                "description": "Sweet and crunchy red bell peppers, pack of 3",
-                "category": "Produce",
-                "price": Decimal("3.99"),
-                "stock": 30,
-                "image_url": "https://images.unsplash.com/photo-1563565375-f3fdfdb6b0c2?w=400",
-            },
-            {
-                "name": "Organic Bananas",
-                "description": "Fair-trade organic bananas, sold per bunch (~6 bananas)",
-                "category": "Produce",
-                "price": Decimal("1.49"),
-                "stock": 100,
-                "image_url": "https://images.unsplash.com/photo-1603833665858-e61d17a86224?w=400",
-            },
-            {
-                "name": "Avocados",
-                "description": "Ripe Hass avocados, pack of 2",
-                "category": "Produce",
-                "price": Decimal("3.29"),
-                "stock": 20,
-                "image_url": "https://images.unsplash.com/photo-1523049673857-eb18f1d7b578?w=400",
-            },
-            # --- Dairy & Eggs ---
-            {
-                "name": "Organic Whole Milk",
-                "description": "Creamy organic whole cow milk, high in calcium, 1L bottle",
-                "category": "Dairy & Eggs",
-                "price": Decimal("2.49"),
-                "stock": 50,
-                "image_url": "https://images.unsplash.com/photo-1550583724-b2692b85b150?w=400",
-            },
-            {
-                "name": "Almond Milk (Unsweetened)",
-                "description": "Smooth unsweetened almond milk, dairy-free and vegan, 1L carton",
-                "category": "Dairy & Eggs",
-                "price": Decimal("3.79"),
-                "stock": 35,
-                "image_url": "https://images.unsplash.com/photo-1600788744282-e4f7f3e8a15e?w=400",
-            },
-            {
-                "name": "Free-Range Large Eggs",
-                "description": "Farm-fresh free-range large brown eggs, dozen pack",
-                "category": "Dairy & Eggs",
-                "price": Decimal("4.99"),
-                "stock": 40,
-                "image_url": "https://images.unsplash.com/photo-1582722872445-44dc5f7e3c8f?w=400",
-            },
-            {
-                "name": "Greek Yogurt (Plain)",
-                "description": "Thick and creamy plain Greek yogurt, 500g tub, high protein",
-                "category": "Dairy & Eggs",
-                "price": Decimal("3.99"),
-                "stock": 25,
-                "image_url": "https://images.unsplash.com/photo-1488477181946-6428a0291777?w=400",
-            },
-            {
-                "name": "Butter (Salted)",
-                "description": "Creamy salted butter made from pasteurized cream, 250g block",
-                "category": "Dairy & Eggs",
-                "price": Decimal("2.99"),
-                "stock": 45,
-                "image_url": "https://images.unsplash.com/photo-1589985270826-4b7bb135bc9d?w=400",
-            },
-            # --- Beverages ---
-            {
-                "name": "Artesian Spring Water",
-                "description": "Pure natural artesian spring water, 1L bottle",
-                "category": "Beverages",
-                "price": Decimal("1.89"),
-                "stock": 80,
-                "image_url": "https://images.unsplash.com/photo-1608885898957-a599fb1b468b?w=400",
-            },
-            {
-                "name": "Sparkling Water (Lemon)",
-                "description": "Refreshing lemon-flavored sparkling water, zero sugar, 500ml can",
-                "category": "Beverages",
-                "price": Decimal("1.49"),
-                "stock": 60,
-                "image_url": "https://images.unsplash.com/photo-1559650656-5d1d361ad10e?w=400",
-            },
-            {
-                "name": "Orange Juice (Freshly Squeezed)",
-                "description": "Freshly squeezed orange juice, no added sugar, 1L bottle",
-                "category": "Beverages",
-                "price": Decimal("4.49"),
-                "stock": 20,
-                "image_url": "https://images.unsplash.com/photo-1600271886742-f049cd451bba?w=400",
-            },
-            # --- Pantry ---
-            {
-                "name": "Whole Wheat Crackers",
-                "description": "Crunchy whole grain crackers with sea salt, 200g box",
-                "category": "Pantry",
-                "price": Decimal("3.49"),
-                "stock": 40,
-                "image_url": "https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?w=400",
-            },
-            {
-                "name": "Gluten-Free Crackers",
-                "description": "Light and crispy crackers made from rice flour, 150g box",
-                "category": "Pantry",
-                "price": Decimal("4.29"),
-                "stock": 25,
-                "image_url": "https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?w=400",
-            },
-            {
-                "name": "Organic Olive Oil",
-                "description": "Extra virgin olive oil, cold-pressed, 500ml bottle",
-                "category": "Pantry",
-                "price": Decimal("8.99"),
-                "stock": 30,
-                "image_url": "https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=400",
-            },
-            {
-                "name": "Basmati Rice",
-                "description": "Aged long-grain basmati rice, premium quality, 1kg bag",
-                "category": "Pantry",
-                "price": Decimal("5.99"),
-                "stock": 50,
-                "image_url": "https://images.unsplash.com/photo-1586201375761-83865001e31c?w=400",
-            },
-            {
-                "name": "Multigrain Bread",
-                "description": "Freshly baked multigrain bread loaf with seeds",
-                "category": "Pantry",
-                "price": Decimal("3.99"),
-                "stock": 20,
-                "image_url": "https://images.unsplash.com/photo-1549931319-a545753467f0?w=400",
-            },
-            # --- Meat & Seafood ---
-            {
-                "name": "Chicken Breast (Boneless)",
-                "description": "Skinless boneless chicken breast, 500g pack",
-                "category": "Meat & Seafood",
-                "price": Decimal("6.99"),
-                "stock": 30,
-                "image_url": "https://images.unsplash.com/photo-1604503468506-a8da13d82791?w=400",
-            },
-            {
-                "name": "Salmon Fillet",
-                "description": "Fresh Atlantic salmon fillet, 250g portion",
-                "category": "Meat & Seafood",
-                "price": Decimal("9.99"),
-                "stock": 15,
-                "image_url": "https://images.unsplash.com/photo-1599084993091-1cb5c0721cc6?w=400",
-            },
-        ]
-
-        seeded_products = []
-        for p in products_data:
-            product = Product(
-                seller_id=dev_user.id,
-                name=p["name"],
-                description=p["description"],
-                category=p["category"],
-                price=p["price"],
-                stock=p["stock"],
-                image_url=p["image_url"],
-                avg_rating=Decimal("0.00"),  # No fake ratings - starts at 0
-                sold_count=0,
-                is_active=True,
-            )
-            db.add(product)
-            seeded_products.append(product)
-
-        await db.commit()
-
-        # Update Qdrant and Neo4j layout
-        logger.info("Initializing vector search and knowledge graph clients...")
-        seed_store_layout()
-
-        logger.info("Indexing products in Qdrant and Neo4j...")
-        for product in seeded_products:
-            await db.refresh(product)
-
-            await index_product_in_qdrant(
-                product_id=product.id,
-                name=product.name,
-                description=product.description,
-                category=product.category,
-                price=float(product.price),
-                is_active=product.is_active,
-            )
-
-            link_product_to_aisle(
-                product_id=product.id,
-                name=product.name,
-                category=product.category,
-            )
-            logger.info(f"Indexed & Linked product: {product.name}")
-
-        logger.info(
-            f"Seeding complete. {len(seeded_products)} products indexed. "
-            "Single Dev User: dev@GroceryGenie.com (bypass login)"
+        for account_id, label in zip(ids, labels, strict=True)
+    ]
+    catalogue = [
+        {
+            "id": demo_id(f"product/{shop}/{good}/{pack}/{brand}"),
+            "seller_id": seller_id,
+            "name": name,
+            "description": f"{label} {name}, {package}. Synthetic demonstration listing.",
+            "category": category,
+            "brand": label,
+            "package": package,
+            "price": Decimal(base * (pack + 1) + brand * 2 + shop) - Decimal("0.05"),
+            "cost_price": Decimal(base * (pack + 1)) * Decimal("0.72"),
+            "stock": (shop * 53 + good * 19 + pack * 3 + brand * 11) % 175,
+            "ingredients": ingredients,
+            "dietary_tags": tags,
+            "allergens": allergens if brand % 7 else None,
+            "label_source": "Synthetic demonstration label",
+        }
+        for shop, seller_id in enumerate(shops)
+        for good, (
+            name,
+            category,
+            packages,
+            ingredients,
+            allergens,
+            tags,
+            base,
+        ) in enumerate(GOODS)
+        for pack, package in enumerate(packages)
+        for brand, label in enumerate(BRANDS)
+    ]
+    anchor = as_of - timedelta(days=as_of.weekday())
+    async with AsyncSessionFactory.begin() as db:
+        await db.execute(
+            insert(User).on_conflict_do_nothing(index_elements=[User.id]), accounts
         )
+        for start in range(0, len(catalogue), 500):
+            await db.execute(
+                insert(Product).on_conflict_do_nothing(index_elements=[Product.id]),
+                catalogue[start : start + 500],
+            )
+
+        orders, fulfillments, lines = [], [], []
+        for week in range(1, 13):
+            for buyer_index, buyer in enumerate(buyers):
+                key = f"order/{buyer_index}/{week}"
+                order_id = demo_id(key)
+                delivered = datetime.combine(
+                    anchor - timedelta(weeks=week, days=-(buyer_index % 5)),
+                    time(10),
+                    tzinfo=UTC,
+                )
+                placed = delivered - timedelta(hours=6)
+                first_shop = buyer_index % len(shops)
+                total = Decimal(0)
+                for seller in (first_shop, (first_shop + week % 7 + 1) % len(shops)):
+                    offset = seller * len(GOODS) * 5 * len(BRANDS)
+                    item = catalogue[
+                        offset
+                        + ((buyer_index + week * 23) % (len(GOODS) * 5 * len(BRANDS)))
+                    ]
+                    units = (buyer_index + week) % 3 + 1
+                    subtotal = Decimal(str(item["price"])) * units
+                    total += subtotal
+                    child_id = demo_id(f"{key}/shop/{seller}")
+                    fulfillments.append(
+                        {
+                            "id": child_id,
+                            "order_id": order_id,
+                            "seller_id": shops[seller],
+                            "status": OrderStatus.delivered,
+                            "total": subtotal,
+                            "created_at": placed,
+                            "packed_at": placed + timedelta(hours=1),
+                            "out_for_delivery_at": placed + timedelta(hours=3),
+                            "delivered_at": delivered,
+                        }
+                    )
+                    lines.append(
+                        {
+                            "id": demo_id(f"{key}/line/{seller}"),
+                            "order_id": order_id,
+                            "fulfillment_id": child_id,
+                            "product_id": item["id"],
+                            "product_name": item["name"],
+                            "quantity": units,
+                            "price_at_purchase": item["price"],
+                            "cost_at_purchase": item["cost_price"],
+                            "package_at_purchase": item["package"],
+                        }
+                    )
+                orders.append(
+                    {
+                        "id": order_id,
+                        "customer_id": buyer,
+                        "total": total,
+                        "created_at": placed,
+                        "status": OrderStatus.delivered,
+                        "delivered_at": delivered,
+                        "checkout_key": key,
+                        "delivery_address": {
+                            "label": "Demo address",
+                            "line1": "10 Sample Road",
+                            "city": "Pune",
+                            "state": "Maharashtra",
+                            "postal_code": "411001",
+                            "country": "India",
+                        },
+                    }
+                )
+        await db.execute(
+            insert(Order).on_conflict_do_nothing(index_elements=[Order.id]), orders
+        )
+        await db.execute(
+            insert(Fulfillment).on_conflict_do_nothing(index_elements=[Fulfillment.id]),
+            fulfillments,
+        )
+        await db.execute(
+            insert(OrderItem).on_conflict_do_nothing(index_elements=[OrderItem.id]),
+            lines,
+        )
+    logger.info(
+        "Seeded %d synthetic product keys and %d synthetic order keys",
+        len(catalogue),
+        len(orders),
+    )
+
+
+async def run(as_of: date) -> None:
+    try:
+        await seed_data(as_of)
+    finally:
+        await engine.dispose()
 
 
 if __name__ == "__main__":
-    asyncio.run(seed_data())
+    cli = argparse.ArgumentParser(description=__doc__)
+    cli.add_argument(
+        "--as-of", type=date.fromisoformat, default=datetime.now(UTC).date()
+    )
+    args = cli.parse_args()
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(run(args.as_of))
