@@ -32,3 +32,8 @@
 - Bounded long product selection prompts and made the purchase-through-confirmation fixture independent of prior synthetic runs. Added configurable Kimi reasoning effort and completion-token parameter support with mocked transport assertions.
 
 - Send the K2.6-specific token limit and non-thinking mode on the official Moonshot endpoint. K3 retains its configurable low reasoning and completion-token settings. Verified a live read-only K2.6 planning request and added a mocked payload regression test.
+
+## Credential handling
+
+- Build the Compose database connection from separate runtime fields and keep the password redacted in settings. Alembic and the application share the same connection configuration.
+- Use GitHub Actions repository secrets on pushes when supplied. Other CI runs generate new masked credentials for disposable databases and signing. Scan staged changes with Gitleaks before committing.

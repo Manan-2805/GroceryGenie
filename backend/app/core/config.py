@@ -3,8 +3,9 @@ from pathlib import Path
 from secrets import token_urlsafe
 from typing import Any
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL, make_url
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 
@@ -17,13 +18,19 @@ class Settings(BaseSettings):
         hide_input_in_errors=True,
     )
 
-    DATABASE_URL: str = "postgresql+asyncpg://postgres@127.0.0.1:5432/grocergenie"
+    DATABASE_URL: str | None = Field(default=None, repr=False)
+    DB_HOST: str | None = None
+    DB_USER: str = "postgres"
+    DB_NAME: str = "grocergenie"
+    POSTGRES_PASSWORD: SecretStr | None = None
     FRONTEND_URL: str = "http://localhost:5173"
     ALLOWED_ORIGINS: str = "http://localhost:5173"
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:5173/api/v1/auth/google/callback"
-    SESSION_SIGNING_KEY: str = Field(default_factory=lambda: token_urlsafe(32))
+    SESSION_SIGNING_KEY: str = Field(
+        default_factory=lambda: token_urlsafe(32), repr=False
+    )
     ENV_MODE: str = "development"
     LOG_LEVEL: str = "INFO"
     DB_POOL_SIZE: int = Field(default=10, ge=1, le=30)
@@ -61,6 +68,21 @@ class Settings(BaseSettings):
                     "LLM_PROVIDERS must be a list of HTTPS provider configurations."
                 )
         return self
+
+    @property
+    def database_url(self) -> URL:
+        if self.DATABASE_URL:
+            return make_url(self.DATABASE_URL)
+        return URL.create(
+            drivername="postgresql+asyncpg",
+            username=self.DB_USER,
+            password=self.POSTGRES_PASSWORD.get_secret_value()
+            if self.DB_HOST and self.POSTGRES_PASSWORD
+            else None,
+            host=self.DB_HOST or "127.0.0.1",
+            port=5432,
+            database=self.DB_NAME,
+        )
 
     @property
     def secure_cookies(self) -> bool:

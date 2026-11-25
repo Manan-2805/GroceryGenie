@@ -67,3 +67,5 @@ The lockfile refresh applies compatible npm advisory fixes. Node 22.23.5 satisfi
 
 - The packaged backend uses a digest-pinned Wolfi glibc base with Python 3.12.16-r3 and libstdc++ 16.2.0-r5. The Debian image variants reported release-blocking operating-system advisories. The Wolfi image passed the same scan and loaded the actual Canary and Piper assets as the application user. [Wolfi Python recipe](https://github.com/wolfi-dev/os/blob/main/python-3.12.yaml)
 - The frontend moved from the unprivileged nginx image that pinned 1.30.6-r1 to Alpine 3.24.3 with nginx 1.30.7-r0. This applied the six outstanding nginx fixes. nginx still runs unprivileged on port 8080.
+
+- The pre-commit hook uses Gitleaks from the developer's PATH or the official v8.30.1 Docker image. This adds no Python or Node package to the application. [Gitleaks image](https://github.com/gitleaks/gitleaks/pkgs/container/gitleaks/)

@@ -45,7 +45,7 @@ class Base(AsyncAttrs, DeclarativeBase):
 
 # Async database engine and session maker
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    settings.database_url,
     pool_pre_ping=True,
     pool_size=settings.DB_POOL_SIZE,
     max_overflow=5,

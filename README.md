@@ -60,7 +60,7 @@ Run `make install` with Python 3.12, uv and Node 22.23.5 available. Set `DATABAS
 | `make test-e2e` | Chromium against a running isolated fixture stack |
 | `docker compose config --quiet` | Resolve Compose structure without printing runtime settings |
 
-The Chromium suite uses synthetic accounts in a disposable database, through the regular authenticated cookie path. Install the browser with `uv run --locked playwright install chromium` from `backend/`. Set `E2E_BASE_URL` if Vite uses a different origin. Use `git config core.hooksPath scripts` to enable the local pre-commit hook.
+The Chromium suite uses synthetic accounts in a disposable database, through the regular authenticated cookie path. Install the browser with `uv run --locked playwright install chromium` from `backend/`. Set `E2E_BASE_URL` if Vite uses a different origin. Use `git config core.hooksPath scripts` to enable the pre-commit hook. It scans staged changes with Gitleaks before running lint and formatting checks. The hook uses a local Gitleaks executable when available and the pinned Gitleaks Docker image otherwise.
 
 Use `scripts/benchmark_catalog.py` with a loopback URL for the seeded catalog workload. Run `scripts/benchmark_voice.py` and `scripts/benchmark_voice_session.py` with the locked backend interpreter and `PYTHONPATH=backend` to measure models and the authenticated server path. The local scripts use synthetic or existing opt-in assets and consume zero cloud API credits.
 
@@ -73,3 +73,17 @@ Use `scripts/benchmark_catalog.py` with a loopback URL for the seeded catalog wo
 5. Interrupt a voice response and end the session. Review the conversation and the committed action outcome in Text Mode.
 
 The backend is a FastAPI monolith. PostgreSQL holds transactional commerce, indexed catalog search, sessions and accepted assistant receipts. The React browser and voice WebSocket use the same shared business operations. [Audit](docs/PROJECT_AUDIT.md) [Implementation plan](docs/FINAL_IMPLEMENTATION_PLAN.md) [Dependency changes](docs/DEPENDENCY_CHANGES.md)
+
+
+## GitHub Actions credentials
+
+For fixed CI-only credentials, create `POSTGRES_PASSWORD` and `SESSION_SIGNING_KEY` under **Settings → Secrets and variables → Actions → New repository secret**. Generate a separate 64-character hex value for each, independent of your local or deployment credentials. You can also create them directly from your terminal with an authenticated GitHub CLI:
+
+```sh
+openssl rand -hex 32 | gh secret set POSTGRES_PASSWORD --repo Manan-2805/GroceryGenie
+openssl rand -hex 32 | gh secret set SESSION_SIGNING_KEY --repo Manan-2805/GroceryGenie
+```
+
+The workflow uses these repository secrets on push runs. When a secret is unavailable, the runner generates a fresh masked value. Pull request runs always use disposable credentials. GitHub supplies `GITHUB_TOKEN` for GHCR publication. [GitHub Actions secrets](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
+
+For local Compose, set the two values in your ignored root `.env`. For an existing PostgreSQL volume, use the current database password unless you also rotate the PostgreSQL role. To rotate it without recreating the volume, generate a fresh value and run `docker compose exec postgres psql -U grocery -d grocergenie`. Enter `\password grocery` at the prompt, provide the new password twice, then exit with `\q`. Update both secrets in `.env` privately and run `docker compose -f compose.yaml -f compose.voice.yaml up -d --wait`. The signing-key change invalidates outstanding OAuth state.

@@ -5,11 +5,14 @@ x-backend: &backend
     context: backend
     dockerfile: Dockerfile.prod
   environment:
-    DATABASE_URL: postgresql+asyncpg://grocery:${POSTGRES_PASSWORD:?Set a URL-safe PostgreSQL password}@postgres:5432/grocergenie
+    DB_HOST: postgres
+    DB_USER: grocery
+    DB_NAME: grocergenie
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
     ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8080}
     ENV_MODE: ${ENV_MODE:-development}
-    SESSION_SIGNING_KEY: ${SESSION_SIGNING_KEY:?Set a strong session signing key}
+    SESSION_SIGNING_KEY: ${SESSION_SIGNING_KEY:?Set SESSION_SIGNING_KEY}
     GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8080/api/v1/auth/google/callback}
@@ -25,7 +28,7 @@ services:
     image: postgres:16.16-alpine
     environment:
       POSTGRES_USER: grocery
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a URL-safe PostgreSQL password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
       POSTGRES_DB: grocergenie
     volumes:
       - grocery-data:/var/lib/postgresql/data

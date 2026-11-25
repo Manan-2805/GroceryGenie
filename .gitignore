@@ -13,7 +13,7 @@ wheels/
 .idea
 /models/
 /backend/models/
-/.env
+.env
 .\backend\.pytest_cache
 .\backend\.ruff_cache
 .\backend\.mypy_cache
