@@ -517,12 +517,13 @@ async def test_assistant_retains_quantity_and_total_budget_through_choice(
     cloud = AsyncMock()
     monkeypatch.setattr(runner, "interpret", cloud)
     buyer, _, seller, _, _ = clients
-    inventory = PRODUCT | {"name": "Budget Test Butter", "price": "40", "stock": 5}
+    marker = "".join(chr(97 + int(digit, 16)) for digit in uuid4().hex[:10])
+    inventory = PRODUCT | {"name": f"{marker} Butter", "price": "40", "stock": 5}
     product = (await seller.post("/api/v1/products", json=inventory)).json()
     first = await buyer.post(
         "/api/v1/chat/text",
         json={
-            "message": "Find two packages of budget test butter under ₹90 and add them to my cart"
+            "message": f"Find two packages of {marker} butter under ₹90 and add them to my cart"
         },
     )
     assert "total budget" in first.text

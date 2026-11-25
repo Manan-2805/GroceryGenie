@@ -1,73 +1,23 @@
-# Stage 1: Build dependencies
-FROM python:3.12-slim AS builder
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install uv via official install script
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:$PATH"
-
+# syntax=docker/dockerfile:1
+FROM ghcr.io/astral-sh/uv:0.13.9 AS uv
+FROM cgr.dev/chainguard/wolfi-base@sha256:28c39be5a5e1e9b85081c10740e8495f6518a865b23bc6a486637c4b21e74b43 AS python
+RUN apk add --no-cache python-3.12=3.12.16-r3 libstdc++=16.2.0-r5
 WORKDIR /app
 
-ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
-    UV_LINK_MODE=copy \
-    UV_COMPILE_BYTECODE=1
-
-# Copy dependency manifests only
+FROM python AS build
+ENV UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_PYTHON=/usr/bin/python3.12
+COPY --from=uv /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --no-install-project
 
-# Install production dependencies only (--no-dev excludes bandit, mypy, pytest, playwright)
-# This is a CPU-only container (no NVIDIA runtime mounted). torch's Linux wheels (2.9+)
-# hard-require the CUDA/nvidia runtime libs at import, and the PyPI Linux build pulls the
-# whole ~2.5GB nvidia+cuda-toolkit+triton stack. We skip torch AND its CUDA-only dependency
-# subtree during sync, then install the last pure-CPU Linux build (2.6.0+cpu, ~200MB) plus
-# CPU onnxruntime. `--no-install-package` must list each CUDA dep because it only prunes the
-# named packages, not their full subtree.
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-dev \
-      --no-install-package torch \
-      --no-install-package onnxruntime-gpu \
-      --no-install-package cuda-bindings \
-      --no-install-package cuda-toolkit \
-      --no-install-package nvidia-cublas \
-      --no-install-package nvidia-cuda-cupti \
-      --no-install-package nvidia-cuda-nvrtc \
-      --no-install-package nvidia-cuda-runtime \
-      --no-install-package nvidia-cudnn-cu13 \
-      --no-install-package nvidia-cufft \
-      --no-install-package nvidia-cufile \
-      --no-install-package nvidia-curand \
-      --no-install-package nvidia-cusolver \
-      --no-install-package nvidia-cusparse \
-      --no-install-package nvidia-cusparselt-cu13 \
-      --no-install-package nvidia-nccl-cu13 \
-      --no-install-package nvidia-nvjitlink \
-      --no-install-package nvidia-nvshmem-cu13 \
-      --no-install-package nvidia-nvtx \
-      --no-install-package triton 2>&1 && \
-    uv pip install --python /app/.venv/bin/python "torch==2.6.0+cpu" --extra-index-url https://download.pytorch.org/whl/cpu 2>&1 && \
-    uv pip install --python /app/.venv/bin/python onnxruntime 2>&1
-
-# Stage 2: Lean runtime image
-FROM python:3.12-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-# Copy the compiled venv from builder
-COPY --from=builder /app/.venv /app/.venv
-
-# Copy only the application source (not tests, docs, dev tools)
+FROM python AS runtime
+LABEL org.opencontainers.image.source="https://github.com/Manan-2805/GroceryGenie"
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+RUN addgroup -g 10001 grocery && adduser -D -H -u 10001 -G grocery grocery && \
+    mkdir -p /app/uploads /app/models && chown 10001:10001 /app/uploads /app/models
+COPY --from=build /app/.venv /app/.venv
 COPY app/ ./app/
 COPY alembic.ini ./
-
+USER 10001:10001
 EXPOSE 8000
-
-ENV PATH="/app/.venv/bin:$PATH"
-
-CMD ["/app/.venv/bin/python", "-B", "-m", "app.prestart", "granian", "--interface", "asgi", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "8192", "--ws-max-queue", "4", "--no-access-log"]

@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 import httpx
@@ -16,7 +17,7 @@ async def test_provider_fallback_is_bounded_and_parses_approved_schema(
         provider.settings,
         "LLM_PROVIDERS",
         """[
-        {"name":"primary","base_url":"https://primary.example.invalid/v1","model":"example","api_key":"synthetic-test-key"},
+        {"name":"primary","base_url":"https://primary.example.invalid/v1","model":"example","api_key":"synthetic-test-key","reasoning_effort":"low","token_limit_field":"max_completion_tokens"},
         {"name":"fallback","base_url":"https://fallback.example.invalid/v1","model":"example","api_key":"synthetic-test-key"},
         {"name":"unused","base_url":"https://unused.example.invalid/v1","model":"example","api_key":"synthetic-test-key"}
     ]""",
@@ -28,6 +29,10 @@ async def test_provider_fallback_is_bounded_and_parses_approved_schema(
         assert request.headers["authorization"] == "Bearer synthetic-test-key"
         assert request.url.path == "/v1/chat/completions"
         if len(observed) == 1:
+            body = json.loads(request.content)
+            assert body["reasoning_effort"] == "low"
+            assert body["max_completion_tokens"] == 900
+            assert "max_tokens" not in body
             return httpx.Response(429)
         if not recovery:
             return httpx.Response(

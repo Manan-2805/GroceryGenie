@@ -1,21 +1,8 @@
-# Dependencies (installed inside container)
 node_modules/
-
-# Build output (not needed in dev; prod builds fresh)
 dist/
-
-# IDE and OS
-.idea
-.git
-.gitignore
-
-# Documentation
-*.md
-
-# Lint and format config (not needed inside container)
-eslint.config.js
-.oxlintrc.json
-prettier.config.js
-
-# TS build configs (vite handles compilation)
-tsconfig*.json
+.git/
+.idea/
+.env
+.env.*
+*.pem
+*.key

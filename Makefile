@@ -1,4 +1,4 @@
-.PHONY: install lint format fix security test test-e2e check check-backend migrate seed
+.PHONY: install lint format fix security test test-e2e coverage check check-backend migrate seed
 
 install:
 	cd backend && uv sync --locked
@@ -7,15 +7,16 @@ install:
 lint:
 	cd backend && uv run --locked ruff check app tests
 	cd backend && uv run --locked mypy --strict --explicit-package-bases app
+	cd backend && uv run --locked ruff check --config pyproject.toml ../scripts
 	cd frontend && npm run check
 
 format:
-	cd backend && uv run --locked ruff format --check app tests
+	cd backend && uv run --locked ruff format --check app tests ../scripts
 	cd frontend && npm exec -- prettier --check 'src/**/*.{ts,tsx,css}'
 
 fix:
 	cd backend && uv run --locked ruff check --fix app tests
-	cd backend && uv run --locked ruff format app tests
+	cd backend && uv run --locked ruff format app tests ../scripts
 	cd frontend && npm exec -- prettier --write 'src/**/*.{ts,tsx,css}'
 
 security:
@@ -25,6 +26,9 @@ security:
 
 test:
 	cd backend && uv run --locked python -m pytest -m 'not e2e'
+
+coverage:
+	cd backend && uv run --locked python -m pytest -m 'not e2e' --cov=app --cov-report=term-missing --cov-fail-under=80
 
 test-e2e:
 	cd backend && RUN_E2E=1 uv run --locked python -m pytest -o addopts= tests/e2e

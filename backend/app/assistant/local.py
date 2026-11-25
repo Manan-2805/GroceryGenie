@@ -281,7 +281,7 @@ async def shopping_options(
             )
         )
     choices = "\n".join(
-        f"{index}. {p.brand} {p.name}, {p.package} · ₹{p.price} each · ₹{p.price * quantity} total"
+        f"{index}. {p.brand[:40]} {p.name[:96]}, {p.package[:45]} · ₹{p.price} each · ₹{p.price * quantity} total"
         for index, p in enumerate(products, start=1)
     )
     return LocalPlan(

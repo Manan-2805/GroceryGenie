@@ -1,2 +1,4 @@
 #!/bin/sh
-make check
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+make lint format

@@ -2,6 +2,18 @@
 
 **Owner requirements incorporated · Awaiting implementation approval · 8 milestones · 28 tasks**
 
+## Implementation checklist
+
+- [x] R01–R03. Restore tracked ORM, portable checks, fresh migrations and deterministic seed.
+- [x] R04–R06. Add Google session integration, same-origin writes, owner scope and validated image uploads. Live Google authorization stays under release verification.
+- [x] R07–R13. Implement and test shared PostgreSQL commerce, fulfillment, seller reporting and indexed search.
+- [ ] R14–R17. The typed runner, bounded plans, server-confirmed writes, local slot collection and owned memory have local evidence. Cloud-provider validation remains open.
+- [x] R18–R20. Implement and measure CPU speech and Chromium hands-free mode. Document the limits of manual interruption and optional GPU work.
+- [x] R21–R23. Verify the updated customer and assistant browser flows in desktop Chromium.
+- [ ] R24–R28. Complete image security, live authorization and provider checks, Actions, GHCR and final PR approval.
+
+[Implementation evidence and remaining verification](IMPLEMENTATION_REPORT.md)
+
 ## 1. Product scope and baseline
 
 GroceryGenie is a public portfolio repository and a functional, synthetic grocery marketplace demo. The differentiator is operating the same customer and seller features through a full-page assistant in Text Mode or hands-free English Voice Mode. Manual browsing and account workflows remain first-class. Final proof includes a reproducible Docker Compose demo, verified engineering checks and recorded measurements.

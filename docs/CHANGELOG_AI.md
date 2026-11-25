@@ -24,3 +24,9 @@
 
 - Added per-user replay receipts for additive stock and cart requests. The dashboard and CSV render seller-scoped SQL metrics using exact purchase-time amounts. Added storefront label details, seller review replies, deterministic 10,000-product data, and 12 synthetic sales weeks.
 - Rebuilt CPU images using the locked dependency graph and unprivileged app processes. Compose initializes a fresh database through a dedicated migration job. Added local benchmarks, a Chromium suite, and gating workflows for coverage, dependencies, scanning, and GHCR publication.
+
+
+## Release checks
+
+- Replaced the vulnerable distribution layers with a pinned Wolfi Python runtime and patched Alpine nginx. The speech Compose profile provisions model weights in a dedicated volume and mounts them read-only into the backend.
+- Bounded long product selection prompts and made the purchase-through-confirmation fixture independent of prior synthetic runs. Added configurable Kimi reasoning effort and completion-token parameter support with mocked transport assertions.

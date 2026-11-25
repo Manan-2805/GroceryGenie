@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from collections import OrderedDict, deque
 from time import monotonic, perf_counter
@@ -90,15 +91,25 @@ async def request_plan(
                 "messages": [
                     {
                         "role": "system",
-                        "content": SYSTEM + "\n" + str(Plan.model_json_schema()),
+                        "content": SYSTEM
+                        + "\n"
+                        + json.dumps(Plan.model_json_schema(), separators=(",", ":")),
                     },
                     {
                         "role": "user",
                         "content": f"Active role: {role.value}\nConversation facts: {context}\nRequest: {text}",
                     },
                 ],
-                "max_tokens": 900,
             }
+            token_field = (
+                "max_completion_tokens"
+                if config.get("token_limit_field") == "max_completion_tokens"
+                else "max_tokens"
+            )
+            request[token_field] = 900
+            effort = config.get("reasoning_effort")
+            if effort in ("low", "high", "max"):
+                request["reasoning_effort"] = effort
             if config.get("json_object", True):
                 request["response_format"] = {"type": "json_object"}
             async with httpx.AsyncClient(timeout=timeout) as client:

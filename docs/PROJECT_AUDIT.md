@@ -263,3 +263,9 @@ Complexity estimates are order-of-magnitude for one engineer and exclude reconst
 | Production readiness | 1/10 | Clean checkout cannot launch the backend and a recovered deployment still needs fundamental security and operations work. |
 
 **Overall 3/10.** Ratings weight bootability, tenant safety and commerce correctness more heavily than feature breadth. The UI and agent implementation provide a recovery starting point. The current branch lacks the conditions for a safe release.
+
+## Recovery update
+
+The original findings above describe the audited revision. The implementation plan retains all 57 finding IDs. The implementation report records verification on the recovery branch. PostgreSQL now provides commerce, search, scoped conversations and confirmation receipts. The previous JWT path, client-defined approvals, raw prompt logging, Redis/vector/graph services and unsafe startup/reset behavior were replaced or retired.
+
+Fresh database, checkout contention and replay, authenticated browser and voice workflows have local evidence. Live identity/provider validation and distribution checks remain release items. [Recovery traceability](FINAL_IMPLEMENTATION_PLAN.md#8-complete-audit-traceability) [Implementation verification](IMPLEMENTATION_REPORT.md)

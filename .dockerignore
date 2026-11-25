@@ -44,3 +44,8 @@ frontend/*.md
 *.egg-info
 dist/
 build/
+
+.env
+.env.*
+*.pem
+*.key

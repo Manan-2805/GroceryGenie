@@ -122,4 +122,4 @@ Step = Annotated[
 
 class Plan(Input):
     steps: list[Step] = Field(default_factory=list, max_length=5)
-    question: str | None = Field(default=None, max_length=300)
+    question: str | None = Field(default=None, max_length=1200)
